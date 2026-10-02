@@ -1,0 +1,9 @@
+﻿*.zip
+__pycache__/
+cache/
+scratch/
+outputs/
+_archive/
+delivery_public/
+DE_BAI.md
+starter/
