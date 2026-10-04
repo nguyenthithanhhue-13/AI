@@ -27,8 +27,8 @@ def evaluate(parser, scenes, labels_by_scene, show=0, tag=""):
     for s, y in zip(scenes, labels_by_scene):
         w = world_from_scene(s)
         g = gold(s["mission"])
-        raw = parser.parse(s["mission"]["text"])
-        p = resolve_with_map(raw, w["landmarks"])
+        raw = parser.parse(s["mission"]["text"], {t for t, v in w["landmarks"].items() if v})
+        p = resolve_with_map(raw, w["landmarks"], w)
         good = True
         for f in FIELDS:
             ok[f] += p[f] == g[f]; good &= p[f] == g[f]

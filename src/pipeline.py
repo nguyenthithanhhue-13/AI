@@ -22,11 +22,22 @@ def train_missions():
     return tr, va
 
 
-def parse_split(split, nlp_mode):
+def presents_of(split, worlds):
+    """Với mỗi cảnh: tập loại địa điểm có trên bản đồ (theo `worlds`: dict ảnh -> {'world': ...}); None nếu CV lỗi."""
+    rows = load_json(DATA / split / "observations.json")
+    out = []
+    for i in range(0, len(rows), 10):
+        w = worlds[rows[i]["image"]]["world"]
+        out.append(None if w is None else {t for t, v in w["landmarks"].items() if v})
+    return out
+
+
+def parse_split(split, nlp_mode, presents=None, tag=""):
     """nlp_mode: 'trainonly' (mô phỏng gặp cách nói hoàn toàn mới)
                  | 'cv5' (chỉ cho validation: mỗi câu được đọc bởi mô hình không học câu đó)
                  | 'final' (học train + validation; dùng cho test)."""
-    path = CACHE / f"nlp2_{split}_{nlp_mode}.pkl"
+    path = CACHE / f"nlp2_{split}_{nlp_mode}{tag}.pkl"
+    P = presents or [None] * 100000
     if path.exists():
         return pickle.load(open(path, "rb"))
     rows = load_json(DATA / split / "observations.json")
@@ -34,7 +45,7 @@ def parse_split(split, nlp_mode):
     tr, va = train_missions()
     if nlp_mode == "trainonly":
         p = MissionParser2().fit(tr)
-        out = [p.parse(t) for t in texts]
+        out = [p.parse(t, P[i]) for i, t in enumerate(texts)]
     elif nlp_mode == "final":
         mp = OUT / "nlp2_final.pkl"
         if mp.exists():
@@ -42,7 +53,7 @@ def parse_split(split, nlp_mode):
         else:
             p = MissionParser2().fit(tr + va)
             p.save(mp)
-        out = [p.parse(t) for t in texts]
+        out = [p.parse(t, P[i]) for i, t in enumerate(texts)]
     elif nlp_mode == "cv5":
         assert split == "validation"
         out = [None] * len(texts)
@@ -50,7 +61,7 @@ def parse_split(split, nlp_mode):
             rest = [m for i, m in enumerate(va) if i % 5 != k]
             p = MissionParser2().fit(tr + rest)
             for i in range(k, len(texts), 5):
-                out[i] = p.parse(texts[i])
+                out[i] = p.parse(texts[i], P[i])
     pickle.dump(out, open(path, "wb"))
     from nlp2 import save_embed_cache
     save_embed_cache()
@@ -71,7 +82,7 @@ def predict_scene(world, mission, resolve=True):
     """mission: kết quả MissionParser2.parse (resolve=True) hoặc mission đúng từ scenes.json (resolve=False)."""
     if world is None:
         return [0] * 10
-    m = resolve_with_map(mission, world["landmarks"]) if resolve else mission
+    m = resolve_with_map(mission, world["landmarks"], world) if resolve else mission
     out = []
     for r in range(10):
         try:
@@ -84,7 +95,7 @@ def predict_scene(world, mission, resolve=True):
 def run_split(split, cv_mode, nlp_mode):
     rows = load_json(DATA / split / "observations.json")
     worlds = cv_split(split, cv_mode)
-    missions = parse_split(split, nlp_mode)
+    missions = parse_split(split, nlp_mode, presents_of(split, worlds), "_" + cv_mode)
     preds = []
     for si in range(len(rows) // 10):
         img = rows[si * 10]["image"]
@@ -102,7 +113,9 @@ def evaluate(cv_mode="dev"):
                                    ("CV + mission ĐÚNG", True, None),
                                    ("CV + NLP 5-fold (cách nói đã quen)", True, "cv5"),
                                    ("CV + NLP chỉ học train (cách nói lạ)", True, "trainonly")]:
-        missions = parse_split("validation", nlp_mode) if nlp_mode else [mission_from_scene(s) for s in scenes]
+        ws = worlds if use_cv else {s["image"]: {"world": world_from_scene(s)} for s in scenes}
+        missions = parse_split("validation", nlp_mode, presents_of("validation", ws), "_" + (cv_mode if use_cv else "true")) \
+            if nlp_mode else [mission_from_scene(s) for s in scenes]
         preds = []
         for si, s in enumerate(scenes):
             w = worlds[s["image"]]["world"] if use_cv else world_from_scene(s)

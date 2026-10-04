@@ -1,0 +1,67 @@
+"""Phép đo "giấu tên gọi" (gần với test hơn validation):
+gộp train + validation, chia các tên gọi địa điểm (trừ tên chuẩn như "thư viện") thành 5 nhóm.
+Lượt k: bỏ khỏi dữ liệu học MỌI câu có tên gọi thuộc nhóm k, rồi chấm trên chính các câu đó
+-> mô hình phải đọc tên gọi chưa từng gặp, giống ~35% cảnh test. Chỉ dùng train/validation.
+
+    python scratch/h1_alias_holdout.py [folds=0,1,2,3,4] [--no-knowledge] [--no-e5]
+"""
+import sys, re, time
+sys.path.insert(0, "src")
+import numpy as np
+from common import *
+from nlp import mine_lexicon, norm
+import nlp2
+from nlp2 import MissionParser2, CANONICAL
+from eval_nlp2 import evaluate
+
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+folds = [int(x) for x in args[0].split(",")] if args else range(5)
+
+_, trl, trs = load_split("train"); _, val, vas = load_split("validation")
+scenes = trs + vas
+labels = [trl[i * 10:(i + 1) * 10] for i in range(len(trs))] + [val[i * 10:(i + 1) * 10] for i in range(len(vas))]
+missions = [s["mission"] for s in scenes]
+
+lex = mine_lexicon(missions)
+canon = {a for lst in CANONICAL.values() for a in lst}
+aliases = sorted(a for a in lex if a not in canon)
+rng = np.random.default_rng(42)
+pats = {a: re.compile(r"(?<![a-z])" + re.escape(a) + r"(?![a-z])") for a in aliases}
+if "--phrases" in sys.argv:
+    # giấu CÂU CON gấp / dễ vỡ (câu không nhắc địa điểm, gặp >= 3 lần, >= 90% cùng nhãn)
+    from nlp import sentences
+    allp = re.compile("|".join(sorted(map(re.escape, lex), key=len, reverse=True)))
+    sents = [[x for x in sentences(m["text"]) if not allp.search(x)] for m in missions]
+    tab = {}
+    for m, ss in zip(missions, sents):
+        for x in ss:
+            t = tab.setdefault(x, [0, 0, 0]); t[0] += 1; t[1] += bool(m["urgent"]); t[2] += bool(m["fragile"])
+    keys = sorted(x for x, t in tab.items() if t[0] >= 3 and (t[1] >= 0.9 * t[0] or t[2] >= 0.9 * t[0]))
+    group = {a: int(g) for a, g in zip(keys, rng.permutation(len(keys)) % 5)}
+    has = [set(ss) & set(keys) for ss in sents]
+    print(f"{len(scenes)} cảnh, {len(keys)} câu con gấp / dễ vỡ chia 5 nhóm")
+    aliases = keys
+else:
+    group = {a: int(g) for a, g in zip(aliases, rng.permutation(len(aliases)) % 5)}
+    has = [{a for a in aliases if pats[a].search(norm(m["text"]))} for m in missions]
+    print(f"{len(scenes)} cảnh, {len(aliases)} tên gọi (không tính tên chuẩn) chia 5 nhóm")
+
+tot_n = tot_s = 0
+for k in folds:
+    t0 = time.time()
+    held = {a for a in aliases if group[a] == k}
+    ev = [i for i in range(len(scenes)) if has[i] & held]
+    tr = [i for i in range(len(scenes)) if not has[i] & held]
+    p = MissionParser2()
+    if "--no-knowledge" in sys.argv: p.use_knowledge = False
+    if "--no-e5" in sys.argv: p.use_e5 = False
+    if "--harsh" in sys.argv: p.use_knowledge = False; p.ablate_rules = True      # tên gọi thật sự xa lạ: không từ khóa, không ví dụ viết tay
+    for a in sys.argv:
+        if a.startswith("--ctx="): p.ctx_weight = float(a[6:])
+        if a.startswith("--gw="): nlp2.GOAL_TEXT_W = float(a[5:])
+    p.fit([missions[i] for i in tr])
+    show = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--show=")), 0))
+    sc, _, _ = evaluate(p, [scenes[i] for i in ev], [labels[i] for i in ev], show, f"nhóm {k}: học {len(tr)} chấm {len(ev)}")
+    tot_n += len(ev); tot_s += sc * len(ev)
+    print(f"      ({time.time() - t0:.0f} giây)", flush=True)
+print(f"GIẤU TÊN GỌI: ĐIỂM (bản đồ đúng) = {tot_s / tot_n:.4f} trên {tot_n} lượt chấm")

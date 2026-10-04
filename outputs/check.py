@@ -1,6 +1,6 @@
 import json 
-OLD_FILE = "C:\\Users\\Thanh Hue\\Downloads\\Phenikaa_Campus_Courier_2026\\Phenikaa_Campus_Courier_2026\\outputs\\cac_ban_nop_cu\\predictions_v4_e5_cnn.json"
-NEW_FILE = "C:\\Users\\Thanh Hue\\Downloads\\Phenikaa_Campus_Courier_2026\\Phenikaa_Campus_Courier_2026\\outputs\\cac_ban_nop_cu\\predictions_v3b_no_generic_negation.json"
+OLD_FILE = "C:\\Users\\Thanh Hue\\Downloads\\Phenikaa_Campus_Courier_2026\\Phenikaa_Campus_Courier_2026\\outputs\\cac_ban_nop_cu\\predictions_v6_lb0.9444.json"
+NEW_FILE = "C:\\Users\\Thanh Hue\\Downloads\\Phenikaa_Campus_Courier_2026\\Phenikaa_Campus_Courier_2026\\outputs\\cac_ban_nop_cu\\predictions_v7_urgent_e5.json"
 
 ROBOTS_PER_MAP = 10 
 with open(OLD_FILE, "r", encoding="utf-8") as f:

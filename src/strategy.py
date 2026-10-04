@@ -39,11 +39,14 @@ def resolve_targets(world, typ, ref):
 
 def edge_cost(info, P, legged):
     status, stairs, allowed = info
-    if status == "closed" or not allowed:
-        return INF
-    if stairs and not legged:
-        return INF
     c = 1.0
+    if status in ("closed", "missing") or not allowed or (stairs and not legged):
+        # chế độ "nới lỏng" (chỉ dùng khi không có đường): coi đoạn cấm là có thể do CV đọc sai, phạt nặng
+        if "relax" not in P:
+            return INF
+        c += P["relax"]
+        if status in ("closed", "missing"):
+            status = "normal"
     if status == "crowded":
         c += P.get("crowd", 0.0)
     elif status == "covered":
@@ -176,10 +179,30 @@ def legal_moves(world, robot_id):
     return [d for d, info in world["adj"].get(s, {}).items() if edge_cost(info, HOPS, robot_id == 4) < INF]
 
 
+RELAX = 100.0  # phạt cho mỗi đoạn "nghi CV đọc sai" khi không có đường; None = tắt (scratch/s20_relax_fallback.py)
+
+
+def relaxed_world(world):
+    """Thêm các đoạn bị thiếu giữa hai giao lộ kề nhau đều có trên bản đồ (đánh dấu 'missing')."""
+    adj = {n: dict(e) for n, e in world["adj"].items()}
+    for n in list(adj):
+        for d in range(4):
+            n2 = (n[0] + DRC[d][0], n[1] + DRC[d][1])
+            if n2 in adj and d not in adj[n]:
+                adj[n][d] = ("missing", False, True)
+    return dict(world, adj=adj)
+
+
 def predict(world, mission, robot_id):
     """Hướng đi (0=UP,1=DOWN,2=LEFT,3=RIGHT) của robot_id."""
     q = q_values(world, mission, robot_id)
     h = world["heading"]
+    if min(q) == INF and RELAX is not None and robot_id != 9:
+        # không có đường: có lẽ CV đọc sai vài đoạn -> chọn đường cần "nghi ngờ" ít đoạn nhất
+        legs = legs_for(world, mission)
+        if legs[-1]:
+            P = dict(PARAMS[robot_id](world, mission), relax=RELAX)
+            q = path_q(relaxed_world(world), legs, P, robot_id == 4)
     if min(q) == INF:
         # không tìm được đường (đồ thị đọc sai...): chọn một bước hợp lệ theo thứ tự ưu tiên
         legal = legal_moves(world, robot_id) or list(world["adj"].get(world["robot"], {})) or [0, 1, 2, 3]

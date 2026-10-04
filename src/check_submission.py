@@ -43,7 +43,8 @@ def health(split):
     from pipeline import cv_split, parse_split      # dùng lại cache; thiếu thì tự chạy
     rws = load_json(DATA / split / "observations.json")
     worlds = cv_split(split, mode)
-    missions = parse_split(split, "final")
+    from pipeline import presents_of
+    missions = parse_split(split, "final", presents_of(split, worlds), "_" + mode)
     n = len(rws) // 10
     st = Counter()
     for si in range(n):
@@ -57,7 +58,7 @@ def health(split):
         st["  trong đó điểm ghé là tên gọi đã biết"] += bool(m["via"] is not None and m["via_known"])
         st["có tham chiếu không gian cho đích"] += m["goal_ref"] is not None
         st["gấp"] += bool(m["urgent"]); st["dễ vỡ"] += bool(m["fragile"])
-        r = resolve_with_map(m, w["landmarks"])
+        r = resolve_with_map(m, w["landmarks"], w)
         st["robot 0 không tìm được đường"] += min(q_values(w, r, 0)) == INF
         st["chú giải đọc bằng chữ + bố cục"] += worlds[rws[si * 10]["image"]]["info"]["legend_how"] == "chữ + bố cục"
     return n, st

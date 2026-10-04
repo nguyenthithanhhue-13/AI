@@ -63,6 +63,9 @@ def dl_distance(a, b, maxd=2):
     return prev[-1]
 
 
+FUZZY_COMMON = 100   # từ gặp >= 100 lần trong dữ liệu học không được coi là bản gõ sai của tên gọi; None = tắt
+
+
 class Lexicon:
     """alias -> loại, có so khớp mờ theo từng từ.
 
@@ -99,6 +102,9 @@ class Lexicon:
                 continue
             d = self._tok_dist(w, a)
             if d > 1:
+                return None
+            # lỗi gõ thật tạo ra từ hiếm; từ lệch mà là từ thông dụng ("ben trong" ~ "bep truong") thì không phải gõ sai
+            if FUZZY_COMMON is not None and self.ngram_freq.get(w, 0) >= FUZZY_COMMON:
                 return None
             total += d
         n = sum(len(a) for a in at)
