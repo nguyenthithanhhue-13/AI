@@ -29,16 +29,27 @@ class Models:
     def __init__(self, folder):
         for n in self.NAMES:
             setattr(self, n, MLP.load(folder / f"{n}.npz"))
+        # CNN đoạn đường (nếu đã huấn luyện): thay cho MLP `edge` vì sai ít hơn nhiều (bậc thang, một chiều)
+        self.edge_cnn = None
+        if (folder / "edge_cnn.onnx").exists() and os.environ.get("NO_EDGE_CNN") != "1":
+            from cv_edge import EdgeCNN
+            self.edge_cnn = EdgeCNN(folder / "edge_cnn.onnx")
+        if (folder / "weather_cnn.onnx").exists() and os.environ.get("NO_WEATHER_CNN") != "1":
+            from cv_weather import WeatherCNN
+            self.weather = WeatherCNN(folder / "weather_cnn.onnx")
+        # CNN đọc chú giải (nếu đã huấn luyện): sai ít hơn MLP hàng chục lần ở phần đọc chữ
+        if (folder / "swatch_cnn.onnx").exists() and os.environ.get("NO_SWATCH_CNN") != "1":
+            from cv_swatch import SwatchCNN
+            self.swatch = SwatchCNN(folder / "swatch_cnn.onnx")
         # CNN phân loại giao lộ (nếu đã huấn luyện): thay cho cặp "căn tâm + MLP" vì chịu được tâm lệch
         self.node_cnn = None
-        import os
         if (folder / "node_cnn.onnx").exists() and os.environ.get("NO_NODE_CNN") != "1":
             from cv_cnn import NodeCNN
             self.node_cnn = NodeCNN(folder / "node_cnn.onnx")
 
     @property
     def n_params(self):
-        return sum(getattr(self, n).n_params for n in self.NAMES)
+        return sum(getattr(self, n).n_params for n in self.NAMES)    # (edge đã là CNN nếu có: EdgeCNN.n_params)
 
 
 def dense_detect(im, model, rows_per_chunk=16):
@@ -361,6 +372,48 @@ def detect(im, models):
             "weather": peaks(heat[..., 5], step, thr=0.2, rad=4)}
 
 
+WEATHER_FIX = True
+
+
+def _median_nn(pts):
+    """Khoảng cách tới láng giềng gần nhất (trung vị) của một tập đỉnh (x, y, score)."""
+    if len(pts) < 3:
+        return 100.0
+    a = np.array([(p[0], p[1]) for p in pts])
+    d = np.hypot(a[:, None, 0] - a[None, :, 0], a[:, None, 1] - a[None, :, 1])
+    np.fill_diagonal(d, 1e9)
+    return float(np.median(d.min(1)))
+
+
+NODE_FILTER = True
+BG_THR = 0.5
+EDGE_CNN_TH = 0.999   # MLP chắc chắn hơn mức này thì tin luôn; còn lại hỏi CNN đoạn đường
+# Trọng số của CNN khi ghép với MLP ở bước phân loại giao lộ (1 = chỉ CNN). CNN đúng gần như mọi ca mà MLP đọc sai,
+# nên nó phải nặng hơn hẳn; nhưng bỏ hẳn MLP lại tệ đi (train 0,9963), nên giữ một phần nhỏ.
+# Đo trên train (2.000 cảnh): 0,5 -> 0,9977 · 0,8 -> 0,9999 · 0,85 -> 0,9999 · 1,0 -> 0,9963; validation 1,0000 với 0,8-0,9.
+NODE_CNN_W = 0.8
+NODE_TTA = False      # (đã thử: đọc mỗi giao lộ ở vài vị trí / cỡ lệch rồi lấy trung bình -> kết quả y hệt, chậm 4 lần)
+
+
+def drop_nonnodes(im, models, nodes, thr=BG_THR):
+    """Loại các đỉnh dò mà CNN giao lộ (lớp 15) cho là KHÔNG phải giao lộ: chữ tiêu đề, vạch bậc thang, mũi tên...
+    Một đỉnh báo nhầm nằm lọt vào lưới làm lệch chỉ số hàng/cột của cả bản đồ."""
+    cnn = models.node_cnn
+    if not NODE_FILTER or cnn is None or cnn.n_classes <= 15 or len(nodes) < 6:
+        return nodes, []
+    unit0 = _median_nn(nodes)
+    pn = cnn.p_not_node(np.array([im.node_crop(p[0], p[1], unit0) for p in nodes]))
+    keep = [p for p, q in zip(nodes, pn) if q < thr]
+    if len(keep) < max(6, 0.6 * len(nodes)):       # lọc quá tay -> bỏ qua, giữ nguyên
+        return nodes, []
+    return keep, [p for p, q in zip(nodes, pn) if q >= thr]
+
+
+def _in_box(sw, pt, mx=40, my=34):
+    sx = [p[0] for p in sw]; sy = [p[1] for p in sw]
+    return min(sx) - mx <= pt[0] <= max(sx) + 60 and min(sy) - my <= pt[1] <= max(sy) + my
+
+
 def analyze(rgb, models, det=None):
     im = Img(rgb)
     if det is None:
@@ -368,6 +421,7 @@ def analyze(rgb, models, det=None):
     all_nodes = [p for p in det["nodes"] if p[2] > 0.5]
     nodes = all_nodes
     wpk = det["weather"]
+    wpk_all = det["weather"]
     sw, weather_row = find_legend_rows(im, models, det)
     info = {}
     if sw:      # vùng chú giải: loại các "giao lộ" nằm trong đó
@@ -383,16 +437,25 @@ def analyze(rgb, models, det=None):
     # biểu tượng thời tiết: nằm ngay trong dòng "Thời tiết" của chú giải, HOẶC ở một góc ảnh
     if weather_row is not None:
         wx, wy = weather_row
-    elif wpk:
-        wx, wy, wscore = max(wpk, key=lambda t: t[2])
-        if wscore > 0.5:
-            nodes = [p for p in nodes if np.hypot(p[0] - wx, p[1] - wy) > 45]
     else:
-        wx, wy = im.w - 70, 50
+        # Biểu tượng thời tiết chỉ có hai chỗ: một dòng trong chú giải, hoặc góc trên bên phải ảnh (x/W 0.9-0.97, y/H 0.02-0.09
+        # trên 100% ảnh train + validation). Đĩa vàng của robot trông giống mặt trời nên bộ dò hay gán "thời tiết" cho robot:
+        # vì vậy chỉ nhận đỉnh nằm ở góc hoặc trong khung chú giải.
+        def corner(p):
+            return p[0] > 0.84 * im.w and p[1] < 0.14 * im.h
+        elig = [p for p in wpk_all if p[2] > 0.3 and (corner(p) or (sw and _in_box(sw, (p[0], p[1]))))] if WEATHER_FIX else wpk
+        if elig:
+            wx, wy, wscore = max(elig, key=lambda t: t[2])
+            if wscore > 0.5 and not (WEATHER_FIX and sw and _in_box(sw, (wx, wy))):
+                nodes = [p for p in nodes if np.hypot(p[0] - wx, p[1] - wy) > 45]
+        else:
+            wx, wy = (0.935 * im.w, 0.055 * im.h) if WEATHER_FIX else (im.w - 70, 50)
 
     # đỉnh yếu (điểm 0.3-0.5) của bộ dò: chỉ dùng để lấp các ô lưới còn trống (vd: nhãn chữ bị xoay nghiêng)
     weak = [p for p in det["nodes"] if 0.3 <= p[2] <= 0.5
             and not (sw and inside(p)) and all(np.hypot(p[0] - q[0], p[1] - q[1]) > 30 for q in nodes)]
+    nodes, dropped = drop_nonnodes(im, models, nodes)
+    weak = [p for p in weak if p not in dropped]
     legend = None
     for attempt in range(4):
         pts = np.array([(p[0], p[1]) for p in nodes])
@@ -438,7 +501,18 @@ def analyze(rgb, models, det=None):
                     pairs.append((rc, rc2, d))
         adj = defaultdict(dict)
         if pairs:
-            EP = models.edge.predict_proba(np.array([im.edge_crop(xy[a], xy[b], unit) for a, b, d in pairs]))
+            crops = np.array([im.edge_crop(xy[a], xy[b], unit) for a, b, d in pairs])
+            EP = models.edge.predict_proba(crops)
+            if models.edge_cnn is not None:
+                # CNN đọc đoạn đường chính xác hơn nhiều (0 lỗi / 26.738 mảnh validation so với 1 / 10 / 16 của MLP) nhưng
+                # chậm hơn ~50 lần trên CPU: chỉ dùng nó cho những đoạn mà MLP KHÔNG chắc (thường dưới 2% số đoạn).
+                need = np.zeros(len(pairs), bool)
+                for head in EP:
+                    need |= head.max(1) < EDGE_CNN_TH
+                if need.any():
+                    CP = models.edge_cnn.predict_proba(crops[need])
+                    for k, head in enumerate(EP):
+                        head[need] = CP[k]
             for (a, b, d), pl, ps, po in zip(pairs, *EP):
                 lk = LOOKS[int(np.argmax(pl))]
                 if lk == "none":
@@ -462,6 +536,12 @@ def analyze(rgb, models, det=None):
     crops = np.array([im.node_crop(xy[rc][0], xy[rc][1], unit) for rc in rcs])
     NP = models.node.predict_proba(crops)[0]
     NPc = models.node_cnn.predict_proba(crops) if models.node_cnn is not None else None
+    if NPc is not None and NODE_TTA:
+        # đọc thêm ở vài vị trí lệch nhẹ và vài cỡ khác rồi lấy trung bình: bù cho việc tâm của bộ dò không chính xác
+        for dx, dy, su in ((-0.05, 0, 1.0), (0.05, 0, 1.0), (0, -0.05, 1.0), (0, 0.05, 1.0), (0, 0, 0.93), (0, 0, 1.07)):
+            NPc = NPc + models.node_cnn.predict_proba(
+                np.array([im.node_crop(xy[rc][0] + dx * unit, xy[rc][1] + dy * unit, unit * su) for rc in rcs]))
+        NPc /= NPc.sum(1, keepdims=True)
     todo = [i for i in range(len(rcs)) if NP[i, 0] < 0.9 or (NPc is not None and NPc[i, 0] < 0.9)]
     if todo:
         cxy = {i: xy[rcs[i]] for i in todo}
@@ -470,15 +550,25 @@ def analyze(rgb, models, det=None):
             A = models.align.predict_proba(np.array([im.node_crop(cxy[i][0], cxy[i][1], unit)[3024:] for i in todo]))
             for i, px, py in zip(todo, A[0], A[1]):
                 cxy[i] = (cxy[i][0] - float(bins[px.argmax()]), cxy[i][1] - float(bins[py.argmax()]))
-        NP2 = models.node.predict_proba(np.array([im.node_crop(cxy[i][0], cxy[i][1], unit) for i in todo]))[0]
+        crops2 = np.array([im.node_crop(cxy[i][0], cxy[i][1], unit) for i in todo])
+        NP2 = models.node.predict_proba(crops2)[0]
         xy = dict(xy)
         for i, p in zip(todo, NP2):
             NP[i] = p
             xy[rcs[i]] = cxy[i]            # tâm đã căn: dùng cho việc so màu với mẫu trong chú giải
+        if NPc is not None:
+            # CNN đọc thêm một lần tại tâm ĐÃ CĂN rồi lấy lần đọc tự tin hơn: tâm của bộ dò có khi lệch 10-20px
+            # (nhãn chữ rộng của kiểu "print"), vượt quá biên độ lệch mà CNN được huấn luyện.
+            NPc2 = models.node_cnn.predict_proba(crops2)
+            for k, i in enumerate(todo):
+                if NPc2[k].max() > NPc[i].max():
+                    NPc[i] = NPc2[k]
     if NPc is not None:
         # CNN chịu được tâm lệch nên đọc tại vị trí bộ dò; ghép với MLP (đọc tại tâm đã căn) bằng trung bình hình học
         mode = os.environ.get("NODE_COMBINE", "both")
-        NP = NPc if mode == "cnn" else np.sqrt((NP + 1e-6) * (NPc + 1e-6))
+        # CNN sai ít hơn MLP hàng chục lần nên được cân nặng hơn trong trung bình hình học có trọng số
+        wc = float(os.environ.get("NODE_CNN_W", NODE_CNN_W))
+        NP = NPc if mode == "cnn" else (NPc + 1e-6) ** wc * (NP + 1e-6) ** (1 - wc)
         NP = NP / NP.sum(1, keepdims=True)
     ri = int(np.argmax(NP[:, 1:5].sum(1)))
     robot = rcs[ri]

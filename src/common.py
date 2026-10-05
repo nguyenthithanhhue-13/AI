@@ -5,6 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "delivery_public"
+if not DATA.exists():
+    DATA = ROOT.parent / "delivery_public"
 CACHE = ROOT / "cache"
 OUT = ROOT / "outputs"
 CACHE.mkdir(exist_ok=True)

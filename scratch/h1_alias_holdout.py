@@ -52,6 +52,19 @@ for k in folds:
     held = {a for a in aliases if group[a] == k}
     ev = [i for i in range(len(scenes)) if has[i] & held]
     tr = [i for i in range(len(scenes)) if not has[i] & held]
+    if "--fair" in sys.argv:
+        # tên gọi bị giấu cũng phải vắng mặt trong từ khóa / ví dụ viết tay (nếu không thì đo lạc quan):
+        # bỏ mọi mẫu từ khóa khớp một tên bị giấu, mọi ví dụ PLACES chứa / nằm trong một tên bị giấu
+        import nlp_knowledge
+        _kw0 = getattr(nlp2, "_KW0", None) or {t: list(v) for t, v in nlp2.KEYWORDS.items()}
+        _pl0 = getattr(nlp2, "_PL0", None) or {t: list(v) for t, v in nlp_knowledge.PLACES.items()}
+        _pm0 = getattr(nlp2, "_PM0", None) or {t: list(v) for t, v in nlp_knowledge.PLACES_MORE.items()}
+        nlp2._KW0, nlp2._PL0, nlp2._PM0 = _kw0, _pl0, _pm0
+        nlp2.KEYWORDS = {t: [(pt, w) for pt, w in v if not any(re.search(pt, a) for a in held)] for t, v in _kw0.items()}
+        un = lambda s: norm(s)
+        for d, d0 in ((nlp_knowledge.PLACES, _pl0), (nlp_knowledge.PLACES_MORE, _pm0)):
+            d.clear()
+            d.update({t: [x for x in v if not any(a in un(x) or un(x) in a for a in held)] for t, v in d0.items()})
     p = MissionParser2()
     if "--no-knowledge" in sys.argv: p.use_knowledge = False
     if "--no-e5" in sys.argv: p.use_e5 = False
@@ -61,6 +74,9 @@ for k in folds:
         if a.startswith("--gw="): nlp2.GOAL_TEXT_W = float(a[5:])
         if a.startswith("--ng="): nlp2.CTX_NG_W = float(a[5:])
         if a.startswith("--nglow="): nlp2.CTX_NG_LOWCONF = float(a[8:])
+        if a.startswith("--set="):                     # --set=TÊN=giá_trị: đổi một hằng số của nlp2
+            name, val = a[6:].split("=")
+            setattr(nlp2, name, eval(val))
     p.fit([missions[i] for i in tr])
     show = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--show=")), 0))
     sc, _, _ = evaluate(p, [scenes[i] for i in ev], [labels[i] for i in ev], show, f"nhóm {k}: học {len(tr)} chấm {len(ev)}")

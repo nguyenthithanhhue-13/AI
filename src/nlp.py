@@ -32,6 +32,59 @@ def norm(t):
     return "".join(c for c in t if unicodedata.category(c) != "Mn")
 
 
+_ORI_W = {"phia", "man", "huong", "goc", "mien", "ben"}
+_DIR_W = ["bac", "nam", "dong", "tay", "tren", "duoi", "trai", "phai"]
+# từ hợp lệ thường đứng sau "phía / bên / mạn..." (không phải từ chỉ hướng gõ sai)
+_AFTER_ORI_OK = {"trong", "ngoai", "sau", "truoc", "kia", "nay", "canh", "nhan", "giao", "gui", "do", "ay", "o", "cua", "la",
+                 "khong", "cho", "den", "toi", "ve", "va", "voi", "xa", "gan", "sat", "le", "lop", "tin", "tap", "an", "ban",
+                 # các từ THẬT dài 3 chữ cái chỉ cách một từ chỉ hướng đúng 1 ký tự: không được "sửa" chúng
+                 "tai", "bao", "dan", "nam", "tay", "bac", "ban", "cao", "con", "hay", "may", "noi", "tam", "tan", "tao",
+                 "thi", "tho", "tra", "tre", "tro", "tru", "dau", "dua", "duc", "dung", "dut"}
+SPATIAL_TYPO_FIX = True
+
+
+def repair_spatial(p):
+    """Sửa lỗi gõ (thiếu / thừa / đảo / thay một ký tự) của TỪ CHỈ HƯỚNG ngay trong khung chỉ hướng:
+    "phía ren" -> "phía tren", "bên tria" -> "bên trai", "pia tay" -> "phia tay", "... tria ban do" -> "... trai ban do".
+    Chỉ sửa khi ngữ cảnh rất chặt, để không làm hỏng từ mới hợp lệ."""
+    spans = list(re.finditer(r"[a-z0-9]+", p))
+    w = [m.group() for m in spans]
+    n = len(w)
+    new = list(w)
+
+    def best_dir(x):
+        if len(x) < 3 or x in _AFTER_ORI_OK or x in _DIR_W:
+            return None
+        c = [(dl_distance(x, d, 1), d) for d in _DIR_W if dl_distance(x, d, 1) <= 1]
+        if len(c) != 1:      # mơ hồ (vd "dan" gần "dong"?) thì bỏ
+            return None
+        return c[0][1] if len(x) >= 3 else None
+
+    for i in range(n):
+        x = w[i]
+        # (a) từ chỉ hướng gõ sai đứng sau từ khung ("phía ren", "mạn tria")
+        if i > 0 and new[i - 1] in _ORI_W:
+            d = best_dir(x)
+            if d is not None:
+                new[i] = d
+        # (b) từ chỉ hướng gõ sai đứng ngay trước "bản đồ"
+        if i + 2 < n and w[i + 1] == "ban" and w[i + 2] == "do":
+            d = best_dir(x)
+            if d is not None:
+                new[i] = d
+    for i in range(n - 1):
+        # (c) từ khung gõ sai ("pia tay", "piha dong") đứng trước từ chỉ hướng
+        if new[i + 1] in _DIR_W and new[i] in ("pia", "hia", "piha", "phja", "pjia"):
+            new[i] = "phia"
+    if new == w:
+        return p
+    out, last = [], 0
+    for m, r in zip(spans, new):
+        out.append(p[last:m.start()]); out.append(r); last = m.end()
+    out.append(p[last:])
+    return "".join(out)
+
+
 def sentences(text):
     t = re.sub(r"\[don #\d+\]", " ", norm(text))
     out = []
@@ -39,7 +92,7 @@ def sentences(text):
         p = re.sub(r"\s+", " ", p).strip(" ,")
         p = re.sub(PREFIX, "", p).strip(" ,")
         if p:
-            out.append(p)
+            out.append(repair_spatial(p) if SPATIAL_TYPO_FIX else p)
     return out
 
 
@@ -64,6 +117,7 @@ def dl_distance(a, b, maxd=2):
 
 
 FUZZY_COMMON = 100   # từ gặp >= 100 lần trong dữ liệu học không được coi là bản gõ sai của tên gọi; None = tắt
+ONE_WORD_LAX = True  # trừ khi tên gọi nhiều từ và chỉ đúng một từ lệch
 
 
 class Lexicon:
@@ -97,6 +151,10 @@ class Lexicon:
 
     def _fuzzy(self, wt, at):
         total = 0
+        # "từ thông dụng thì không phải gõ sai" được nới khi tên gọi có nhiều từ mà CHỈ MỘT từ lệch
+        # ("hong lab" ~ "phong lab": "hong" là từ thật nhưng "lab" khớp đúng). Cụm quen thuộc vẫn bị chặn ở cuối hàm.
+        ndiff = sum(1 for w, a in zip(wt, at) if w != a)
+        lax = ONE_WORD_LAX and len(at) >= 2 and ndiff == 1
         for w, a in zip(wt, at):
             if w == a:
                 continue
@@ -104,7 +162,7 @@ class Lexicon:
             if d > 1:
                 return None
             # lỗi gõ thật tạo ra từ hiếm; từ lệch mà là từ thông dụng ("ben trong" ~ "bep truong") thì không phải gõ sai
-            if FUZZY_COMMON is not None and self.ngram_freq.get(w, 0) >= FUZZY_COMMON:
+            if FUZZY_COMMON is not None and not lax and self.ngram_freq.get(w, 0) >= FUZZY_COMMON:
                 return None
             total += d
         n = sum(len(a) for a in at)

@@ -14,6 +14,10 @@ from common import *
 from cvfeat import *
 
 
+def centers_of(s):
+    return [((l["swatch"][0] + l["swatch"][2]) / 2, (l["swatch"][1] + l["swatch"][3]) / 2) for l in s["legend"]]
+
+
 def build_scene(args):
     split, s, idx, aug = args
     rng = np.random.default_rng(idx * 7 + (1000003 if aug else 0))
@@ -86,8 +90,11 @@ def build_scene(args):
             dx, dy = rng.uniform(-0.02, 0.02, 2) * unit
             u = unit * rng.uniform(0.95, 1.05)
             out["node_x"].append(im.node_crop(p[0] + dx, p[1] + dy, u)); out["node_y"].append(c)
-        for _ in range(3 if c else (1 if rng.random() < 0.35 else 0)):   # dữ liệu cho CNN: tâm lệch tới 7% unit (như bộ dò thật)
-            j = rng.uniform(-0.07, 0.07, 2) * unit
+        # dữ liệu cho CNN: tâm lệch tới 7% unit như trước, cộng thêm các mẫu lệch tới 20% unit
+        # (bộ dò thật hay lệch 10-20px ở nhãn chữ rộng của kiểu "print", tức 10-23% unit)
+        for k in range(5 if c else (1 if rng.random() < 0.35 else 0)):
+            lo = 0.07 if k < 3 else 0.20
+            j = rng.uniform(-lo, lo, 2) * unit
             u = unit * rng.uniform(0.94, 1.06)
             out["cn_x"].append(im.node_crop(p[0] + j[0], p[1] + j[1], u)); out["cn_y"].append(c)
         for _ in range(4 if c else 0):   # bộ căn tâm (chỉ cho robot/địa điểm): lệch lớn, nhãn = độ lệch
@@ -95,6 +102,37 @@ def build_scene(args):
             u = unit * rng.uniform(0.95, 1.05)
             out["al_x"].append(im.node_crop(p[0] + j[0] * unit, p[1] + j[1] * unit, u)[3024:])
             out["al_y"].append(tuple(np.clip(np.round(j / ALIGN_STEP), -ALIGN_BINS, ALIGN_BINS).astype(int) + ALIGN_BINS))
+
+    # ---- "không phải giao lộ" (lớp 15 của CNN giao lộ): chữ tiêu đề, vạch bậc thang, mũi tên, dấu X, mép đoạn đường ----
+    # bộ dò quét dày hay báo nhầm ở những chỗ nhiều mực này; nếu không có lớp âm bản thì CNN sẽ gọi chúng là "giao lộ thường"
+    xyl = np.array(list(xy.values()))
+    others = np.array([c for c in centers_of(s)] + [wc])
+    ink = cv2.blur((im.gray < 110).astype(np.float32), (25, 25))[PAD:PAD + H, PAD:PAD + W]
+
+    def ok_neg(x, y):
+        if not (0 <= x < W and 0 <= y < H):
+            return False
+        return np.min(np.hypot(xyl[:, 0] - x, xyl[:, 1] - y)) > 0.30 * unit and np.min(np.hypot(others[:, 0] - x, others[:, 1] - y)) > 24
+
+    cand = rng.uniform([0, 0], [W, H], size=(600, 2))
+    w = np.array([ink[int(y), int(x)] for x, y in cand]) ** 1.5 + 1e-4
+    top = rng.choice(len(cand), size=40, replace=False, p=w / w.sum())
+    nneg = 0
+    for i in top:
+        x, y = cand[i]
+        if ok_neg(x, y) and nneg < 14:
+            out["cn_x"].append(im.node_crop(x, y, unit * rng.uniform(0.9, 1.1))); out["cn_y"].append(15); nneg += 1
+    for _ in range(3):          # vùng tiêu đề / mép trên của ảnh
+        x, y = rng.uniform(0.02 * W, 0.98 * W), rng.uniform(0, max(20.0, xyl[:, 1].min() - 0.5 * unit))
+        if ok_neg(x, y):
+            out["cn_x"].append(im.node_crop(x, y, unit * rng.uniform(0.9, 1.1))); out["cn_y"].append(15)
+    for e in s["edges"]:        # dọc đoạn đường: bậc thang, mũi tên, nửa đường; gồm cả chỗ cách giao lộ 0.3-0.5 unit
+        if rng.random() < 0.18:
+            a, b = np.array(xy[tuple(e["a"])]), np.array(xy[tuple(e["b"])])
+            t = rng.choice([rng.uniform(0.3, 0.7), rng.uniform(0.3, 0.45), rng.uniform(0.55, 0.7)])
+            p = a + t * (b - a)
+            if ok_neg(p[0], p[1]):
+                out["cn_x"].append(im.node_crop(p[0], p[1], unit * rng.uniform(0.9, 1.1))); out["cn_y"].append(15)
 
     # ---- đoạn đường (M3) ----
     look = s["road_look"]
@@ -176,10 +214,11 @@ if __name__ == "__main__":
     split = sys.argv[1]
     what = sys.argv[2] if len(sys.argv) > 2 else "all"      # all | det | crops | cnn
     data = build(split, None, aug=(split == "train"))
-    if what == "cnn":       # chỉ lưu dữ liệu cho CNN giao lộ, không đụng tới các file cache khác
+    if what in ("cnn", "all"):       # dữ liệu cho CNN giao lộ (gồm lớp 15 "không phải giao lộ")
         np.savez(CACHE / f"cvcnn_{split}.npz", cn_x=data["cn_x"], cn_y=data["cn_y"])
-        print("đã lưu", CACHE / f"cvcnn_{split}.npz", data["cn_x"].shape)
-        sys.exit()
+        print("đã lưu", CACHE / f"cvcnn_{split}.npz", data["cn_x"].shape, "lớp 15:", int((data["cn_y"] == 15).sum()))
+        if what == "cnn":
+            sys.exit()
     data = {k: v for k, v in data.items() if not k.startswith("cn_")}
     if what in ("all", "crops"):
         np.savez(CACHE / f"cvdata_{split}.npz", **{k: v for k, v in data.items() if not k.startswith("det")})

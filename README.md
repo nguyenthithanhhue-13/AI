@@ -31,6 +31,14 @@ mission ──NLP──► (goal, via, tham chiếu, gấp, dễ vỡ) ───
 
 Chi tiết, số đo và phần "giảng lại cho đội" nằm trong [GIAI_THICH.md](GIAI_THICH.md).
 
+## Cập nhật mới nhất (06/10): train và validation đều 100%
+
+Xem [CAP_NHAT_06-10.md](CAP_NHAT_06-10.md). Tóm tắt: thêm 4 CNN nhỏ (đoạn đường, giao lộ có lớp "không phải giao lộ",
+chú giải, thời tiết), sửa cách tìm biểu tượng thời tiết, sửa lỗi gõ chỉ hướng / "không" / tên gọi lệch một từ.
+Validation (CV thật + NLP chỉ học train): **1,0000**; train (cấu hình nộp bài): **1,0000**; NLP giấu tên gọi: 0,9973.
+File nộp mới: `outputs/predictions.json` (bản sao `outputs/cac_ban_nop_cu/predictions_v19_cnn_cv_typo.json`).
+Các bảng bên dưới là số đo cũ.
+
 ## Kết quả đo trên validation (macro accuracy)
 
 Khi dự đoán không dùng `scenes.json`. CV học trên train. NLP đo theo hai cách: "5-fold" (mỗi câu được đọc bởi mô hình
@@ -55,7 +63,8 @@ bản đồ; độ đúng của bước đó trên test không đo được. Xem
 | file trong `outputs/cac_ban_nop_cu/` | nội dung | điểm bảng xếp hạng |
 |---|---|---|
 | `predictions_v2_lb0.9322.json` | NLP bản 2 (tìm tên gọi lạ theo ngữ cảnh + từ khóa + bản đồ) | **0,9322** (robot yếu nhất 0,8611) |
-| `predictions_v4_e5_cnn.json` (= `predictions.json`) | v3a + CNN nhỏ đọc nhãn địa điểm (ghép với MLP); validation "CV + mission đúng" 0,9887 → 0,9917 | chưa nộp |
+| `predictions_v19_cnn_cv_typo.json` (= `predictions.json`) | 4 CNN cho CV + sửa lỗi gõ NLP; train và validation 1,0000 | chưa nộp |
+| `predictions_v4_e5_cnn.json` | v3a + CNN nhỏ đọc nhãn địa điểm (ghép với MLP); validation "CV + mission đúng" 0,9887 → 0,9917 | chưa nộp |
 | `predictions_v3a_e5_negation.json` | thêm mô hình nghĩa pretrained e5 cho tên gọi lạ và câu gấp / dễ vỡ; thời tiết chỉ lấy từ biểu tượng | chưa nộp |
 | `predictions_v3b_no_generic_negation.json` | như v3a nhưng tắt luật "từ phủ định chung" | chưa nộp |
 
@@ -69,7 +78,7 @@ Cần thêm thư viện `onnxruntime`, `tokenizers`, `huggingface_hub` và tải
 ## Tuân thủ quy định
 
 - Dự đoán chạy hoàn toàn offline (numpy, OpenCV, scikit-learn); không gọi API nào.
-- Tổng tham số 128.156.710 (giới hạn 200 triệu), gồm mô hình pretrained công khai multilingual-e5-small (117.653.760) chạy offline bằng onnxruntime.
+- Tổng tham số 131.244.682 (giới hạn 200 triệu), gồm mô hình pretrained công khai multilingual-e5-small (117.653.760) và 4 CNN nhỏ, tất cả chạy offline bằng onnxruntime.
 - Test chỉ được dùng để chạy dự đoán: không huấn luyện, không dò tham số, không đọc câu hay xem ảnh test, không bổ sung
   từ điển từ test. Bảng từ khóa tiếng Việt trong `nlp2.py` được viết từ kiến thức ngôn ngữ chung và từ train/validation.
   Thứ duy nhất lấy từ lượt chạy test là các **bộ đếm tổng hợp** do `check_submission.py` in ra (ví dụ "bao nhiêu % cảnh có
@@ -85,7 +94,8 @@ Windows, Python 3.13, chỉ cần CPU.
 pip install numpy opencv-python pillow scipy scikit-learn
 ```
 
-Không dùng PyTorch (máy này bị Windows Application Control chặn DLL của torch, nên toàn bộ mạng nơ-ron được viết bằng numpy).
+Khi dự đoán không cần PyTorch (MLP viết bằng numpy, CNN chạy bằng onnxruntime). PyTorch bản CUDA chỉ cần để huấn luyện
+lại các CNN; trên máy này nó được cài ở `F:\pylibs` (xem [CAP_NHAT_06-10.md](CAP_NHAT_06-10.md)).
 
 ## Chạy lại từ đầu
 
@@ -111,7 +121,7 @@ Lưu ý: muốn chạy lại một bước sau khi sửa code thì xóa file cac
 (`det_*.pkl` = kết quả bộ dò, `world_*.pkl` = world cuối, `nlp2_*.pkl` = mission đã đọc) và `outputs/nlp2_final.pkl`
 (mô hình NLP cuối). `run_cv.py` luôn tính lại `world_*.pkl` nhưng dùng lại `det_*.pkl` nếu có.
 
-File nộp: `outputs/predictions.json` (bản mới nhất, giống `predictions_v4_e5_cnn.json`). Bản cũ để so sánh trên bảng xếp hạng nếu muốn:
+File nộp: `outputs/predictions.json` (bản mới nhất, giống `predictions_v19_cnn_cv_typo.json`; các bước huấn luyện CNN ở CAP_NHAT_06-10.md). Bản cũ để so sánh trên bảng xếp hạng nếu muốn:
 `outputs/cac_ban_nop_cu/predictions_v1_nlp_lexicon_only.json` (NLP bản đầu, chỉ nhận tên gọi đã có trong từ điển).
 
 ## Cấu trúc thư mục
