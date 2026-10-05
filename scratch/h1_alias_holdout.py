@@ -59,6 +59,8 @@ for k in folds:
     for a in sys.argv:
         if a.startswith("--ctx="): p.ctx_weight = float(a[6:])
         if a.startswith("--gw="): nlp2.GOAL_TEXT_W = float(a[5:])
+        if a.startswith("--ng="): nlp2.CTX_NG_W = float(a[5:])
+        if a.startswith("--nglow="): nlp2.CTX_NG_LOWCONF = float(a[8:])
     p.fit([missions[i] for i in tr])
     show = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--show=")), 0))
     sc, _, _ = evaluate(p, [scenes[i] for i in ev], [labels[i] for i in ev], show, f"nhóm {k}: học {len(tr)} chấm {len(ev)}")

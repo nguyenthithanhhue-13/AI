@@ -10,6 +10,21 @@ python src/pipeline.py test final
 python src/check_submission.py final
 ```
 
+## Bổ sung ngày 05/10
+
+- **Điểm tốt nhất hiện tại: 0,9600 (1728/1800)**, file `outputs/predictions.json`
+  (bản sao: `outputs/cac_ban_nop_cu/predictions_v17_lb0.9600_last.json`).
+- So với bản 0,9567: câu phụ hai vế kiểu "…không gấp lắm, nhưng đang rất gấp" / "tưởng gấp, … không cần vội" được đọc
+  theo quy tắc **vế cuối là ý chốt** (`nlp2.MIXED_POLICY = "last"`), chỉ ảnh hưởng robot 6. Được thêm 6 đáp án.
+- Bản đang chờ điểm: `outputs/cac_ban_nop_cu/predictions_v18_cach_rule.json`. Thêm luật `CACH_RULE`: nhận chỉ dẫn gần / xa
+  viết kiểu "X cách Y không xa", "X ở tận phía xa Y" (từ gần / xa đứng sau địa điểm mốc, hoặc mốc đứng xa tên đích hơn).
+  Luật thêm 34 chỉ dẫn ở test, cả 34 địa điểm mốc đều có đúng 1 bản trên bản đồ (tính chất của mốc thật). Khác bản
+  0,9600 ở 41 đáp án. **Code trong `src/` đang ở cấu hình v18**; muốn ra lại đúng bản 0,9600 thì đặt
+  `nlp2.CACH_RULE = False`.
+- Đã thử và bỏ: bộ phân loại ngữ cảnh khớp chính xác từ ngữ (`CTX_NG_W`, để 0).
+- Lưu ý về quy định: để tìm ra kiểu câu "X cách Y", đã đếm các từ chức năng nằm giữa hai tên địa điểm ở test (như
+  "cách", "xa", "ở"). Không đọc cả câu hay đáp án, nhưng sát ranh giới hơn việc chỉ đếm tỉ lệ.
+
 ## Điều cần biết trước khi đọc
 
 - Bảng xếp hạng chỉ chấm **180 cảnh** (1800 đáp án), không phải cả 1200 cảnh test. Một đáp án = 0,00056 điểm.

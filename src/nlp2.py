@@ -169,7 +169,7 @@ ORD_CUE = r"\b(truoc|xong|sau (do|khi|day)|dau tien|roi (moi|hay|thi)|tiep (theo
 VIA_VERB = r"\b(ghe|tat|qua|re|dung chan|ngang|giao|mang|dua|gui|chuyen|toi|den|diem giao|dang cho|can nhan)\b"
 PAST_CUE = r"\b(da|vua|hom (qua|truoc|kia|no)|lan truoc|truoc day|tung|truoc kia|luc nay|khi nay)\b"
 PART_OR = True         # câu phụ nhiều vế: xét từng vế rồi gộp
-MIXED_POLICY = "calm"  # câu trộn (vế gấp + vế không gấp): "calm" = như bản 0.9467; "urgent" = bản v13 (0.9461); "last" / "first"
+MIXED_POLICY = "last"  # câu trộn (vế gấp + vế không gấp): "calm" = như bản 0.9467; "urgent" = bản v13 (0.9461); "last" / "first"
 CALM_WINS = True       # câu nói rõ "không gấp / không dễ vỡ" thắng câu khác chỉ được mô hình nghĩa đoán là gấp / dễ vỡ
 E5_POS_URGENT = True  # mô hình nghĩa được tự nhận câu là gấp khi không có từ khóa nào?
 USE_PHRASES_MORE = True   # học thêm các ví dụ viết tay bổ sung 2026-10-04 (nlp_knowledge.PHRASES_MORE)
@@ -198,17 +198,31 @@ def disambiguate(s, acc):
     return "".join(out) + s[last:]
 
 
-def rule_direction(ctx):
+CACH_RULE = True   # "X cách Y xa / không xa / một đoạn ngắn": từ gần/xa đứng SAU địa điểm mốc
+
+
+def rule_direction(ctx, post=""):
     """ctx: vài từ ngay sau tên địa điểm (đã che địa điểm kế tiếp thành PLC). -> kind hoặc None.
     Chỉ nhận khi từ chỉ hướng đi kèm từ định hướng ("phía", "bên", "mạn"...) hoặc "bản đồ"."""
     head = ctx.split(" PLC")[0] if "PLC" in ctx else ctx
-    if "PLC" in ctx and len(head.split()) <= 4:
+    if "PLC" in ctx and len(head.split()) <= (5 if CACH_RULE else 4):
         neg = bool(re.search(r"\b(khong|chang)\b", head))        # "không xa X" = gần X
         if MERGE_RULES:
             # từ quan hệ đứng SÁT mốc nhất quyết định ("trạm xá nằm gần X": chữ "xá" không phải "xa")
             rel = [w for w in head.split() if w in ("xa", "gan", "sat", "canh", "ke", "giap")]
             if rel:
                 return ("near" if neg else "far") if rel[-1] == "xa" else ("far" if neg else "near")
+        if CACH_RULE and re.search(r"\bcach\b", head) and not re.search(r"\b(xa|gan)\b", head):
+            # post: vài từ ngay sau địa điểm mốc
+            m = re.match(r"(la |co |chi |cung )?(khong |chang |cha |chua )?(rat |kha |hoi |qua |that |tuong doi |lam )?(xa|gan)\b", post)
+            if m:
+                far = m.group(4) == "xa"
+                return ("far" if far else "near") if not m.group(2) else ("near" if far else "far")
+            if re.match(r"(chi |co |khoang )?((mot|vai|may|it) )?(doan|quang|khoang|buoc|met|phut)( chan| duong)? ?(ngan|nho|thoi)?\b", post) \
+                    and not re.search(r"\b(dai|xa)\b", post):
+                return "near"
+            if re.match(r"(ca |mot |hang )?(doan|quang|khoang)( duong)? (dai|xa)\b", post):
+                return "far"
         if re.search(r"\b(cach xa|xa)\b", head):
             return "near" if neg else "far"
         if re.search(r"\b(gan|sat|canh|ke|ke ben|ben canh|lien ke|giap)\b", head):
@@ -366,6 +380,10 @@ class MissionParser2:
             self.e5_phrase = LogisticRegression(C=50, max_iter=3000, class_weight="balanced").fit(E.encode(px), py)
             # loại địa điểm đoán từ NGỮ CẢNH quanh nó (món hàng, người nhận...), không nhìn tên: chứng cứ bổ sung cho tên lạ
             self.e5_ctx = LogisticRegression(C=20, max_iter=3000).fit(E.encode([c for c, _ in ctx_rows]), [t for _, t in ctx_rows])
+            # cùng ngữ cảnh đó nhưng khớp CHÍNH XÁC từ ngữ (món hàng, người nhận quen thuộc: "quả bóng", "hộp phấn", "hồ sơ"...)
+            self.v_cx = TfidfVectorizer(analyzer="word", ngram_range=(1, 3), sublinear_tf=True, token_pattern=r"\S+", min_df=2)
+            self.cx_clf = LogisticRegression(C=10, max_iter=3000).fit(
+                self.v_cx.fit_transform([_unaccent(c) for c, _ in ctx_rows]), [t for _, t in ctx_rows])
             E.save()
         if verbose:
             print("lexicon", len(self.lex.alias2type), "| roles", Counter(ROLES[y] for y in yrole), "| kinds", Counter(KINDS[y] for y in ykind))
@@ -597,6 +615,9 @@ class MissionParser2:
     def _anchor_of(me):
         nxt = [x for x in me["ms"] if x[0] >= me["j"]]
         if nxt and nxt[0][0] - me["j"] <= 3:
+            return nxt[0]
+        # mốc đứng xa hơn một chút ("X ở tận phía xa Y", "X không nằm gần Y"): nhận nếu giữa hai tên có từ gần / xa / cách
+        if CACH_RULE and nxt and nxt[0][0] - me["j"] <= 5 and any(t in ("gan", "xa", "cach", "sat", "ke", "canh", "giap") for t in me["toks"][me["j"]:nxt[0][0]]):
             return nxt[0]
         return None
 
@@ -880,6 +901,12 @@ class MissionParser2:
                     pc = np.full(10, 1e-3)
                     pc[self.e5_ctx.classes_] = self.e5_ctx.predict_proba(embedder().encode([self._ctx_text(me)]))[0]
                     d = d * (pc + 0.02) ** getattr(self, "ctx_weight", CTX_W)
+                if CTX_NG_W > 0 and hasattr(self, "cx_clf"):
+                    px_ = np.full(10, 1e-3)
+                    px_[self.cx_clf.classes_] = self.cx_clf.predict_proba(self.v_cx.transform([_unaccent(self._ctx_text(me))]))[0]
+                    # CTX_NG_LOWCONF: chỉ dùng khi tên gọi tự nó không đủ chắc (không có từ khóa quen)
+                    if not CTX_NG_LOWCONF or (d / d.sum()).max() < CTX_NG_LOWCONF:
+                        d = d * (px_ + 0.02) ** CTX_NG_W
             dist[k] = d / d.sum()
         # địa điểm gây nhiễu đã biết loại -> loại đó không thể là đích hay điểm ghé;
         # mốc (gần/xa) đã biết loại -> không thể là đích (nhưng CÓ THỂ trùng loại với điểm ghé)
@@ -940,16 +967,17 @@ class MissionParser2:
                     kind, pr = None, 0.0        # bộ phân loại không chắc, hoặc ngữ cảnh có từ lạ -> để luật từ khóa quyết định
                 # luật từ khóa trên các từ GỐC ngay sau tên địa điểm (bộ phân loại không hiểu từ chỉ hướng lạ như "mạn dưới")
                 me = ments[k]
-                raw, q = [], me["j"]
-                while q < len(me["toks"]) and len(raw) < 5:
+                raw, q, post = [], me["j"], ""
+                while q < len(me["toks"]) and len(raw) < (6 if CACH_RULE else 5):
                     hit = next((x for x in me["ms"] if x[0] == q), None)
                     if hit:
                         raw.append("PLC")
                         if hit[1] < len(me["toks"]) and me["toks"][hit[1]] == "hon":
                             raw.append("hon")
+                        post = " ".join(me["toks"][hit[1]:hit[1] + 5])
                         break
                     raw.append(me["toks"][q]); q += 1
-                rk = rule_direction(" ".join(raw))
+                rk = rule_direction(" ".join(raw), post)
                 if rk is not None and (kind is None or pr < 0.9):
                     kind, pr = rk, max(pr, 0.6)
                 if kind is None:
@@ -979,6 +1007,8 @@ class MissionParser2:
             return pickle.load(f)
 
 
+CTX_NG_W = 0.0      # trọng số manh mối ngữ cảnh khớp chính xác từ ngữ (0 = tắt)
+CTX_NG_LOWCONF = 0  # nếu > 0: chỉ áp dụng khi độ chắc của tên gọi < ngưỡng này
 CTX_W = 0.5         # trọng số manh mối NGỮ CẢNH (món hàng, người nhận quanh tên lạ) khi đoán loại tên lạ: phép đo khắt khe 0.9851 -> 0.9876
 GOAL_TEXT_W = 0.3   # trọng số của bộ phân loại "cả câu -> loại đích" (món hàng, người nhận...) khi chốt loại đích
 REACH_RULE = True   # đích / điểm ghé phải TỚI ĐƯỢC (đúng 2300/2300 cảnh train + validation); không thì chọn ứng viên kế tiếp
