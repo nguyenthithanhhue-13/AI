@@ -140,8 +140,78 @@ def save_embed_cache():
         _EMB.save()
 
 
-def keyword_scores(text):
-    return np.array([sum(w for pat, w in KEYWORDS[t] if re.search(pat, text)) for t in PLACE_TYPES])
+# Bỏ dấu làm nhiều chữ khác nghĩa trùng nhau ("đọc"/"(giám) đốc", "ăn"/"an (ninh)", "trọ"/"trợ (giảng)", "chỗ ở"/"chờ ở",
+# "thể (thao)"/"thẻ", "khoa"/"(chìa) khóa", "xưởng"/"xuống", "dược"/"được"...). Khi cụm gốc CÓ dấu, một chữ trong từ khóa địa điểm
+# chỉ được tính nếu dạng có dấu của nó nằm trong danh sách dưới đây; nếu không thì bị che trước khi so từ khóa.
+KW_ACC = {
+    "doc": "đọc đốc", "an": "ăn ấn an", "tro": "trọ", "hoc": "học", "ngu": "ngủ", "nghi": "nghỉ", "sach": "sách", "bep": "bếp", "gac": "gác",
+    "cong": "cổng công", "thuoc": "thuốc", "muon": "mượn", "cho": "chỗ", "san": "sân", "bong": "bóng", "boi": "bơi", "vo": "võ",
+    "kham": "khám", "tiem": "tiêm", "duoc": "dược", "com": "cơm", "bua": "bữa", "nau": "nấu", "lop": "lớp", "giang": "giảng",
+    "day": "dạy", "xuong": "xưởng", "khoa": "khoa", "nop": "nộp", "chot": "chốt", "khach": "khách", "benh": "bệnh", "the": "thể",
+    "thi": "thi thí", "dau": "đấu đậu", "do": "đỗ đồ", "tap": "tập tạp", "to": "tô tổ", "trong": "trông", "de": "để", "noi": "nội nơi",
+    "bac": "bác", "quan": "quán quản", "cua": "cửa", "giao": "giáo", "chuyen": "chuyên chuyền", "dang": "đăng", "hop": "hợp",
+    "don": "đón", "bao": "bảo báo", "ve": "vệ", "tai": "tài", "so": "sơ", "ho": "hồ hộ", "nhan": "nhận nhân", "le": "lễ", "tan": "tân",
+    "may": "máy", "mau": "mẫu", "cau": "cầu", "da": "đá đa", "luc": "lực", "loi": "lối", "bai": "bãi bài", "xa": "xá", "ky": "ký kỹ kí kĩ",
+    "tu": "tư tự", "ban": "ban bàn", "bo": "bộ", "giam": "giám", "hieu": "hiệu", "y": "y", "ta": "tá", "nghe": "nghe", "ly": "lý lí",
+    "hoi": "hội", "truong": "trường trưởng", "hanh": "hành", "chinh": "chính", "dao": "đào", "tao": "tạo", "vu": "vụ", "giay": "giấy",
+    "toan": "toán", "ke": "kế", "tuyen": "tuyển", "mon": "môn", "cuu": "cứu", "cap": "cấp", "duong": "dưỡng đường", "tri": "trị",
+    "cham": "chăm", "soc": "sóc", "suc": "sức", "tram": "trạm", "tru": "trú", "cu": "cư", "can": "căn can", "lang": "làng",
+    "thu": "thư thủ", "vien": "viện viên", "van": "văn vận", "khat": "khát", "phe": "phê", "ca": "cà", "ra": "ra", "vao": "vào",
+    "mot": "một", "tong": "tổng", "nuoc": "nước", "om": "ốm", "chay": "chạy", "giat": "giặt", "tang": "tầng", "pho": "phó",
+}
+KW_ACC = {k: set(v.split()) for k, v in KW_ACC.items()}
+KW_ACC_CHECK = True
+
+
+def kw_text(text, acc=None):
+    """Bản dùng để so từ khóa: che các chữ mà dạng có dấu cho thấy là chữ khác (chỉ khi cụm gốc có dấu)."""
+    if not KW_ACC_CHECK or not acc or acc == text or not re.search(r"[^\x00-\x7f]", acc):
+        return text
+    tw, aw = text.split(), acc.lower().split()
+    if len(tw) != len(aw):
+        return text
+    return " ".join(("_" * len(w)) if (w in KW_ACC and a not in KW_ACC[w] and _unaccent(a) == w) else w for w, a in zip(tw, aw))
+
+
+# từ khóa bổ sung 2026-10-06 (kiến thức chung về trường đại học): các cách gọi mà bộ từ khóa cũ chưa nhận ra
+KEYWORDS_MORE = {
+    "library": [("luan van", 2), ("on bai", 2), ("quan thu", 3), ("tu hoc", 2.5), ("ke sach", 3), ("phong doc", 3)],
+    "dorm": [("luu xa", 3), ("cu tru", 2.5), (r"\bgiat\b", 2), ("cung phong", 2.5), ("quan sinh", 3), ("truong tang", 2.5), ("qua dem", 2)],
+    "sports": [("trong tai", 3), ("duong chay", 3), ("khan dai", 3), ("chay bo", 3), ("doi tuyen", 2.5), ("giai dau", 3), ("van dong vien", 3)],
+    "clinic": [("bang bo", 3), ("huyet ap", 3), ("bi thuong", 2.5), (r"\bom\b", 2), ("vet thuong", 3), ("phat thuoc", 3)],
+    "canteen": [(r"\bnuoc\b", 1.5), ("phuc vu", 1.5), ("dau bep", 3), ("ban com", 3), ("an vat", 3)],
+    "parking": [("phuong tien", 2.5), ("coi xe", 3), ("ve xe", 3), ("cat xe", 3)],
+    "lecture": [("phong thi", 2.5), ("hoi thao", 2.5), ("seminar", 2.5), ("chuyen de", 2), ("thay giao", 2), ("co giao", 2), ("chu nhiem", 2.5),
+                ("giam thi", 2.5), ("ly thuyet", 2.5), ("dung lop", 3), ("tro giang", 3), ("tiet hoc", 3), ("buoi hoc", 2.5)],
+    "lab": [("che tao", 2.5), ("thu nghiem", 2.5), ("lap rap", 2.5), ("kinh hien vi", 3), ("thiet bi", 2), ("to ky thuat", 2.5), ("do an", 0)],
+    "office": [("quan tri", 2.5), ("thanh tra", 3), ("hop tac", 2.5), ("hieu pho", 3), ("dieu hanh", 2.5), ("thu quy", 3), ("xac nhan", 2.5),
+               ("bang diem", 3), ("xin dau", 3), ("truong phong", 2), ("pho phong", 2.5), ("hoc phi", 3), ("giam doc", 4.5), ("tro ly", 2),
+               ("can bo", 1.5), ("nhap hoc", 3)],
+    "gate": [("cua ngo", 3), ("soat the", 3), ("shipper", 2.5), ("ben ngoai", 2), ("an ninh", 5), ("khoi truong", 2.5), ("gac cong", 3),
+             ("nguoi ngoai", 2)],
+}
+USE_KW_MORE = True
+
+
+KW_WHOLE_WORD = True      # từ khóa chỉ khớp TRỌN từ ("ẩm thực" không khớp trong "trung tâm thực hành", "y khoa" không khớp "trợ lý khoa")
+_KW_RX = {}
+
+
+def _kw_hit(pat, text):
+    if not KW_WHOLE_WORD:
+        return re.search(pat, text)
+    rx = _KW_RX.get(pat)
+    if rx is None:
+        rx = _KW_RX[pat] = re.compile(r"(?<![a-z0-9])(?:" + pat + r")(?![a-z0-9])")
+    return rx.search(text)
+
+
+def keyword_scores(text, acc=None):
+    text = kw_text(text, acc)
+    sc = [sum(w for pat, w in KEYWORDS[t] if _kw_hit(pat, text)) for t in PLACE_TYPES]
+    if USE_KW_MORE:
+        sc = [x + sum(w for pat, w in KEYWORDS_MORE.get(t, []) if _kw_hit(pat, text)) for x, t in zip(sc, PLACE_TYPES)]
+    return np.array(sc)
 
 
 # câu "gây nhiễu": phủ định / chuyện đã qua -> địa điểm trong câu không phải đích cũng không phải điểm ghé
@@ -172,6 +242,10 @@ PART_OR = True         # câu phụ nhiều vế: xét từng vế rồi gộp
 MIXED_POLICY = "last"  # câu trộn (vế gấp + vế không gấp): "calm" = như bản 0.9467; "urgent" = bản v13 (0.9461); "last" / "first"
 CALM_WINS = True       # câu nói rõ "không gấp / không dễ vỡ" thắng câu khác chỉ được mô hình nghĩa đoán là gấp / dễ vỡ
 E5_POS_URGENT = True  # mô hình nghĩa được tự nhận câu là gấp khi không có từ khóa nào?
+DUP_NOREF = 1.0           # hệ số cho loại có 2 bản khi đích / điểm ghé là tên lạ và câu không kèm hướng (1.0 = tắt)
+PRESENT_UNK_TH = 0.9      # tên lạ có loại đoán chắc >= ngưỡng này mà loại đó không có trên bản đồ -> gây nhiễu (0 = tắt)
+E5_FRAGILE_MIN = 0.9      # mo hinh nghia phai chac >= nguong nay moi duoc TU gan 'de vo' khi khong co tu khoa (0 = nhu cu)
+USE_PLACES_DESC = True    # ví dụ cách gọi gián tiếp (mô tả hoạt động, gọi theo người) - nlp_knowledge.PLACES_DESC
 USE_PLACES_MORE = True    # học thêm các cách gọi địa điểm viết tay bổ sung 2026-10-06 (nlp_knowledge.PLACES_MORE)
 USE_PHRASES_MORE = True   # học thêm các ví dụ viết tay bổ sung 2026-10-04 (nlp_knowledge.PHRASES_MORE)
 KHONG_STRICT = True
@@ -403,6 +477,9 @@ class MissionParser2:
             if USE_PLACES_MORE:
                 from nlp_knowledge import PLACES_MORE
                 PLACES = {t: list(PLACES[t]) + [x for x in PLACES_MORE.get(t, []) if x not in PLACES[t]] for t in PLACES}
+            if USE_PLACES_DESC:
+                from nlp_knowledge import PLACES_DESC
+                PLACES = {t: list(PLACES[t]) + [x for x in PLACES_DESC.get(t, []) if x not in PLACES[t]] for t in PLACES}
             if not getattr(self, "use_knowledge", True):      # thí nghiệm: không dùng ví dụ viết tay
                 PHRASES, PLACES = {}, {t: [] for t in PLACE_TYPES}
             for t, v in CANONICAL_ACC.items():
@@ -468,7 +545,7 @@ class MissionParser2:
         p = self.type_clf.predict_proba(self.v_t.transform([text]))[0]
         full = np.full(10, 1e-3)
         full[self.type_clf.classes_] = p
-        score = CHAR_W * np.log(full + 0.03) + (0.0 if getattr(self, "ablate_rules", False) else 2.0) * keyword_scores(text)
+        score = CHAR_W * np.log(full + 0.03) + (0.0 if getattr(self, "ablate_rules", False) else 2.0) * keyword_scores(text, acc)
         if getattr(self, "use_e5", False):
             s = acc if acc else text
             if RESTORE_ACC and s.isascii():
@@ -722,7 +799,7 @@ class MissionParser2:
             if e is not None and ok(s, e):
                 out.append((s, e))
         if ANCHOR_RULE:
-            for m in sorted(ms + [(a, b, None, None) for a, b in out]):
+            for m in sorted(ms + [(a, b, None, None) for a, b in out], key=lambda m: (m[0], m[1])):
                 q = m[1]
                 if q < n and words[q] in ("nam", "o"):
                     q += 1
@@ -881,7 +958,7 @@ class MissionParser2:
             if f:
                 if (gen_neg and not (sure and k == 2)) or (sure and k == 4 and pe.max() > 0.75 and (gen_neg or not VETO_NEEDS_NEG)):
                     f = False
-            elif sure and k == 2 and not re.search(FRAGILE_NEG, s) and not gen_neg:
+            elif sure and k == 2 and pe.max() >= E5_FRAGILE_MIN and not re.search(FRAGILE_NEG, s) and not gen_neg:
                 f = True
             self._ev.append((u and u_rule, f and f_rule, not u and (bool(re.search(URGENT_NEG, s)) or (sure and k == 3)),
                              not f and (bool(re.search(FRAGILE_NEG, s)) or (sure and k == 4))))
@@ -1070,6 +1147,19 @@ class MissionParser2:
                 if me["type"] is not None and me["type"] not in present:
                     role[k] = 2
                     negs[k] = True
+            if PRESENT_UNK_TH:
+                # tên LẠ mà loại đoán rất chắc lại không có trên bản đồ -> cũng là gây nhiễu (không ép sang loại khác),
+                # miễn là trong câu còn ứng viên khác cho vai đích
+                marks = []
+                for k, me in enumerate(ments):
+                    if me["type"] is None and not negs[k] and role[k] != 3:
+                        d0 = self.span_probs(me["text"], " ".join(me["acc"][me["i"]:me["j"]]))
+                        if d0.max() >= PRESENT_UNK_TH and PLACE_TYPES[int(np.argmax(d0))] not in present:
+                            marks.append(k)
+                if [k for k in range(len(ments)) if not negs[k] and role[k] != 3 and k not in marks]:
+                    for k in marks:
+                        role[k] = 2
+                        negs[k] = True
         self._structure(ments, role, negs, P)
         dist = [None] * len(ments)
         for k, me in enumerate(ments):
@@ -1219,7 +1309,9 @@ def resolve_with_map(m, landmarks, world=None):
             cand = [t for t in cand if t in two]
         if not cand:
             cand = present
-        return max(cand, key=lambda t: dist[PLACE_TYPES.index(t)])
+        # không kèm hướng -> loại có 2 bản ít khả năng hơn (train + validation: 16,5% so với ~27% nếu chọn ngẫu nhiên)
+        pen = lambda t: DUP_NOREF if (not need_two and t in two) else 1.0
+        return max(cand, key=lambda t: dist[PLACE_TYPES.index(t)] * pen(t))
 
     excluded = set(m.get("excluded") or ())
     via_known_type = m["via"] if m.get("via_known") else None

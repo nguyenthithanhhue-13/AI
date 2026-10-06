@@ -93,3 +93,47 @@ python src/pipeline.py test final ; python src/check_submission.py final
 
 Train và validation 100% không có nghĩa bảng xếp hạng sẽ 100%. Test có tên gọi và khung câu chưa từng gặp
 (khoảng 35% cảnh có đích là tên gọi lạ). Phép đo gần với tình huống đó nhất là "giấu tên gọi": 0,9973.
+
+## Bổ sung tối 06/10 (đọc câu): 0,9778 → 0,9806
+
+File tốt nhất: `outputs/predictions.json` = `outputs/cac_ban_nop_cu/predictions_v20_lb0.9806.json` (**0,9806 = 1765/1800**).
+
+### Sửa lỗi làm chương trình dừng
+
+`MissionParser2._frame_spans` sắp xếp các bộ `(a, b, loại, tên)`; khi hai cụm trùng vị trí, Python so `None` với chuỗi và báo
+`TypeError: '<' not supported between instances of 'NoneType' and 'str'`. Đã sửa: sắp xếp theo vị trí `(a, b)`.
+
+### Thay đổi NLP (đều đo trên train + validation, không làm giảm phép đo nào)
+
+| cờ trong `src/nlp2.py` | nội dung | tác động ở test |
+|---|---|---|
+| `USE_PLACES_DESC` | ~280 cách gọi gián tiếp trong `nlp_knowledge.PLACES_DESC` ("nơi mượn sách", "bác trông xe") | cùng dòng dưới: +5 đáp án |
+| `PRESENT_UNK_TH = 0.9` | tên LẠ có loại đoán rất chắc mà loại đó không có trên bản đồ → gây nhiễu, không ép sang loại khác | (bản v20, 0,9806) |
+| `KW_ACC_CHECK`, `KW_WHOLE_WORD`, `KEYWORDS_MORE` | từ khóa địa điểm: phân biệt chữ trùng khi bỏ dấu ("giám đốc"/"đọc", "an ninh"/"ăn"), chỉ khớp trọn từ, thêm từ khóa | đổi 2 đáp án (v21) |
+| `E5_FRAGILE_MIN = 0.9` | mô hình nghĩa phải chắc ≥ 0,9 mới tự gắn "dễ vỡ" khi không có từ khóa | đổi 7 đáp án robot 7 (v22, chưa nộp) |
+| `DUP_NOREF = 1.0` (tắt) | đã thử ưu tiên loại có 1 bản khi không kèm hướng: giảm điểm, bỏ | — |
+
+### Chạy lại trên máy có đủ mô hình CNN
+
+Mô hình đọc câu phải học lại vì code và ví dụ đã đổi:
+
+```powershell
+git pull origin using_cnn
+Remove-Item cache/nlp2_*.pkl, outputs/nlp2_final.pkl -ErrorAction SilentlyContinue
+python src/pipeline.py test final
+python src/check_submission.py final
+```
+
+Lưu ý: `outputs/nlp2_final.pkl` trong repo vẫn là bản cũ (học trước các thay đổi này), nên phải xóa để học lại.
+Ba mô hình `edge_cnn.onnx`, `weather_cnn.onnx`, `swatch_cnn.onnx(.data)` chưa có trên GitHub (thư mục `outputs/` bị
+`.gitignore`); muốn đưa lên: `git add -f outputs/models_final/*.onnx* outputs/models_dev/*.onnx*`.
+
+### Cách các file v20–v22 được tạo trên máy không có CNN
+
+`scratch/d3_delta.py`: lấy file 0,9778 làm nền, chỉ thay đáp án ở cảnh mà thay đổi NLP làm đổi kết quả đọc câu, và chỉ khi
+bản đồ MLP cũ cho ra đúng 10 đáp án của file nền ở cảnh đó. Chạy `pipeline.py test final` trên máy có CNN sẽ cho kết quả
+chuẩn hơn (có thể lệch vài cảnh so với v20–v22).
+
+### Đã kiểm tra và không thấy vấn đề (bộ đếm tổng hợp ở test, `scratch/d1`–`d6`)
+
+Sót hướng bắc / nam, sót gần / xa, sót điểm ghé, câu hai vế trộn về "dễ vỡ", cảnh bị điền mặc định toàn 0.
