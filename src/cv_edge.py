@@ -39,17 +39,17 @@ def main(mode, epochs=6):
     torch.manual_seed(0); np.random.seed(0)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     d = np.load(CACHE / "cvdata_train.npz"); X, Y = d["edge_x"], d["edge_y"]
-    X, Y = with_strong(X, Y, "edge")
     dv = np.load(CACHE / "cvdata_validation.npz"); Xv, Yv = dv["edge_x"], dv["edge_y"]
-    if mode == "final":
-        X, Y = np.concatenate([X, Xv]), np.concatenate([Y, Yv])
+    X, Y = with_strong(X, Y, "edge", mode, extra=[(Xv, Yv)] if mode.startswith("final") else [])
     print(f"CNN đoạn đường ({dev}): {len(X)} mẫu huấn luyện", flush=True)
-    net = build_net().to(dev)
+    net = build_net()
+    init_from(net, "edge_cnn.pt", mode)
+    net = net.to(dev)
     print("tham số:", sum(p.numel() for p in net.parameters()))
     bs = 256
     steps = epochs * (len(X) // bs + 1)
     opt = torch.optim.AdamW(net.parameters(), lr=2e-3, weight_decay=1e-4)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=3e-3, total_steps=steps)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=float(os.environ.get("MAX_LR", "3e-3")), total_steps=steps)
     # GPU 4 GB: giữ dữ liệu ở RAM, chuyển từng lô (để cả mảng trên GPU gây tráo bộ nhớ và chậm hơn nhiều)
     Xg = torch.from_numpy(X); Yg = torch.from_numpy(Y.astype(np.int64))
     Xvg = torch.from_numpy(Xv); Yvg = torch.from_numpy(Yv.astype(np.int64))

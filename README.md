@@ -73,7 +73,13 @@ bản đồ; độ đúng của bước đó trên test không đo được. Xem
 | file trong `outputs/cac_ban_nop_cu/` | nội dung | điểm bảng xếp hạng |
 |---|---|---|
 | `predictions_v2_lb0.9322.json` | NLP bản 2 (tìm tên gọi lạ theo ngữ cảnh + từ khóa + bản đồ) | **0,9322** (robot yếu nhất 0,8611) |
-| `predictions_v34c_spans_flags.json` (= `predictions.json`) | v33 + đợt 17: sửa lỗi của v33 ("Nhớ né X ra" bị thành điểm ghé), khung "Điểm giao: X.", chủ ngữ "Ban quản lý / Cán bộ <nơi>", cụm món hàng không phải địa điểm ("trứng gà"), "cổng phía trước", "trạm xá", dấu khử nhập nhằng ở mép tên, cờ dễ vỡ / gấp cách nói mới (mã mới + bộ đọc đã học của v32b). Khác v32b: 45 dòng / 16 cảnh | chưa nộp |
+| **`predictions_v41_negref.json`** (ứng viên) | v35 + đọc câu đợt 20 (`src/nlp2.py`; mã v35: `nlp2_v35_src.py.bak`): tham chiếu gần / xa BỊ PHỦ ĐỊNH ("X không xa Y" = gần, "không ở gần Y" = xa — 0 câu trong train + validation, bộ phân loại đọc ngược; `REF_NEG_FIX`), giới từ "sang / vào / về / ra" (`PREP_CANON`) và các sửa tổng quát khác (CAP_NHAT đợt 20). Bản đồ test + bộ đọc đã lưu của v35. Khác v35: 20 bản đồ / 120 dòng | chưa nộp |
+| `predictions_v40_cv_multi.json` | v35 + CV tăng cường NHIỀU LỚP (đợt 19, `scratch/make_v40.sh`): CNN tinh chỉnh trên ảnh xoay / thu nhỏ / mất độ phân giải / mờ / đổi màu-tương phản / nhiễu / JPEG chồng nhau, MLP căn tâm + giao lộ học lại, CNN đọc mọi đoạn đường, gộp CNN đoạn đường cũ + mới (`models_finalm`). Bền hơn hẳn trên validation làm méo nặng; trên test chỉ đổi 2 bản đồ (đoạn đường) và **0 dòng dự đoán** -> trùng v35 (xem CAP_NHAT đợt 19) | không nộp (= v35) |
+| `predictions_v39_refit_vote.json` | v35 + bỏ phiếu giữa 7 lần học lại bộ đọc câu: khác v35 1 cảnh / 5 dòng (tung đồng xu) | không nộp |
+| `predictions_v38_tta_vote.json` | v35 + bỏ phiếu CV đa nhiễu: trùng v35 | không nộp |
+| `predictions_v35_cand.json` (= `predictions.json`) | v34c, bộ đọc học lại bằng mã mới | **0,9828** (robot yếu nhất 0,9722) — bài được tính |
+| `predictions_v36C.json`, `predictions_v36A.json` | A/B: tắt `CACH_RULE` + `GOAL_FRAME_RULE` + `REACH_RULE` / tắt `NEW_FRAME_FIX` | 0,9772 / 0,9800 (các luật đó ĐÚNG trên test) |
+| `predictions_v34c_spans_flags.json` | v33 + đợt 17: sửa lỗi của v33 ("Nhớ né X ra" bị thành điểm ghé), khung "Điểm giao: X.", chủ ngữ "Ban quản lý / Cán bộ <nơi>", cụm món hàng không phải địa điểm ("trứng gà"), "cổng phía trước", "trạm xá", dấu khử nhập nhằng ở mép tên, cờ dễ vỡ / gấp cách nói mới (mã mới + bộ đọc đã học của v32b). Khác v32b: 45 dòng / 16 cảnh | **0,9828** |
 | `predictions_v33_ref_frames_flags.json` | v32b + lượt 5 (CÓ LỖI "né X" -> thay bằng v34c): tham chiếu rõ ràng, chọn cặp đích / điểm ghé, khung "Hàng cho X:", dấu khử nhập nhằng, ranh giới tên, cờ cách nói mới (mã mới + bộ đọc đã học của v32b). Khác v32b: 35 dòng / 11 cảnh | chưa nộp |
 | `predictions_v33r_refit.json` | như v33 nhưng học lại bộ đọc bằng mã mới: thêm 4 cảnh đổi do các quyết định vai trò sát nút (≈ tung đồng xu). Khác v32b: 56 dòng / 15 cảnh | dự phòng |
 | `predictions_v32b_cv_strong_final.json` (= v32a) | v32a + hai CNN chú giải / giao lộ mới (làm méo mạnh): bản đồ test không đổi | **0,9828** (cao nhất) |
@@ -144,9 +150,19 @@ Lưu ý: muốn chạy lại một bước sau khi sửa code thì xóa file cac
 (`det_*.pkl` = kết quả bộ dò, `world_*.pkl` = world cuối, `nlp2_*.pkl` = mission đã đọc) và `outputs/nlp2_final.pkl`
 (mô hình NLP cuối). `run_cv.py` luôn tính lại `world_*.pkl` nhưng dùng lại `det_*.pkl` nếu có.
 
-File nộp: `outputs/predictions.json` (bản mới nhất, giống `predictions_v22_nlp_newframes_edgestrong.json`; tạo lại bằng
-`bash scratch/make_v22.sh <tên_bản>`; các bước huấn luyện CNN ở CAP_NHAT_06-10.md). Bản cũ để so sánh trên bảng xếp hạng nếu muốn:
+File nộp: `outputs/predictions.json` = `outputs/cac_ban_nop_cu/predictions_v35_cand.json` (bài được tính, 0,9828). Tạo lại
+từ mô hình đã lưu (`outputs/models_final/`, `outputs/nlp2_final.pkl`, `outputs/e5_small/`): `python src/pipeline.py test final`
+(nhớ xóa `cache/det_test_final.pkl`, `cache/world_test_final.pkl`, `cache/nlp2_test_final_final.pkl` nếu muốn tính lại từ
+đầu). Kiểm tra tái lập không đụng tới cache / file nộp: `PROCS=6 python scratch/h87_repro.py` (chạy lại toàn bộ suy luận
+dưới tên tạm `finalrep` rồi so từng dòng với v35). Các bước huấn luyện CNN ở CAP_NHAT_06-10.md. Bản cũ để so sánh:
 `outputs/cac_ban_nop_cu/predictions_v1_nlp_lexicon_only.json` (NLP bản đầu, chỉ nhận tên gọi đã có trong từ điển).
+Phần tăng cường nhiều lớp của đợt 19 (`cv_data.py ... multi`, `scratch/train_multi.sh`, `models_finalm`, `EDGE_CNN_TH`,
+`edge2/`) là tùy chọn, KHÔNG dùng trong bài nộp (mặc định của mã vẫn cho đúng v35).
+
+Ứng viên v41 (đợt 20): `src/nlp2.py` hiện là mã đợt 20. Tạo lại `predictions_v41_negref.json` từ bản đồ test đã tính +
+bộ đọc đã lưu: `python scratch/make_v41.py v41_negref` (bước (a); bước (b) học lại bộ đọc chỉ để đối chiếu — học lại
+bằng mã v35 gốc cũng lệch 4 bản đồ so với bộ đọc đã lưu, nên luôn dùng `outputs/nlp2_final.pkl`). Với mã đợt 20,
+`python src/pipeline.py test final` (sau khi xóa `cache/nlp2_test_final_final.pkl`) cho đúng v41.
 
 ## Cấu trúc thư mục
 

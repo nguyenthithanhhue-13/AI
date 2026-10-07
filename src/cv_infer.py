@@ -34,6 +34,13 @@ class Models:
         if (folder / "edge_cnn.onnx").exists() and os.environ.get("NO_EDGE_CNN") != "1":
             from cv_edge import EdgeCNN
             self.edge_cnn = EdgeCNN(folder / "edge_cnn.onnx")
+        # (đợt 19) CNN đoạn đường thứ hai (thư mục con edge2/, nếu có): lấy TRUNG BÌNH xác suất với CNN chính.
+        # Bản cũ (học ảnh sạch + làm méo mạnh) đúng tuyệt đối trên ảnh sạch; bản mới (tăng cường nhiều lớp) bền hơn hẳn khi
+        # ảnh méo lạ. Trung bình: mảnh validation sạch 0 / 0 / 0 lỗi, mảnh tăng cường nhiều lớp 5 / 7 / 11 (cũ 77 / 84 / 29).
+        self.edge_cnn2 = None
+        if self.edge_cnn is not None and (folder / "edge2" / "edge_cnn.onnx").exists() and os.environ.get("NO_EDGE_CNN2") != "1":
+            from cv_edge import EdgeCNN
+            self.edge_cnn2 = EdgeCNN(folder / "edge2" / "edge_cnn.onnx")
         if (folder / "weather_cnn.onnx").exists() and os.environ.get("NO_WEATHER_CNN") != "1":
             from cv_weather import WeatherCNN
             self.weather = WeatherCNN(folder / "weather_cnn.onnx")
@@ -394,7 +401,8 @@ EDGE_CNN_RARE = True   # đoạn MLP đọc là đóng / một chiều / bậc t
 # (kiểu nét, bậc thang, một chiều). CNN đoạn đường học thêm ảnh làm méo mạnh (cv_data.py train strong): validation ảnh gốc
 # 300/300, ảnh mờ 1.0 + JPEG 40 chỉ 1 lỗi bậc thang (CNN cũ: 20 + 6 một chiều) -> lấy thẳng CNN, không trung bình với MLP
 EDGE_HEAD_MODE = os.environ.get("EDGE_HEAD_MODE", "cnn,cnn,cnn").split(",")
-EDGE_CNN_TH = 0.999   # MLP chắc chắn hơn mức này thì tin luôn; còn lại hỏi CNN đoạn đường
+EDGE_CNN_TH = float(os.environ.get("EDGE_CNN_TH", "0.999"))   # MLP chắc chắn hơn mức này thì tin luôn; còn lại hỏi CNN
+# (đợt 19: EDGE_CNN_TH=2 -> CNN đọc MỌI đoạn; dưới tương phản / gamma lạ MLP sai rất tự tin nên không hỏi CNN)
 # Trọng số của CNN khi ghép với MLP ở bước phân loại giao lộ (1 = chỉ CNN). CNN đúng gần như mọi ca mà MLP đọc sai,
 # nên nó phải nặng hơn hẳn; nhưng bỏ hẳn MLP lại tệ đi (train 0,9963), nên giữ một phần nhỏ.
 # Đo trên train (2.000 cảnh): 0,5 -> 0,9977 · 0,8 -> 0,9999 · 0,85 -> 0,9999 · 1,0 -> 0,9963; validation 1,0000 với 0,8-0,9.
@@ -543,6 +551,8 @@ def analyze(rgb, models, det=None):
                     need |= (EP[0].argmax(1) == LOOKS.index("closed")) | (EP[1][:, 1] > 0.5) | (EP[2].argmax(1) != 2)
                 if need.any():
                     CP = models.edge_cnn.predict_proba(crops[need])
+                    if models.edge_cnn2 is not None:
+                        CP = [(a + b) / 2 for a, b in zip(CP, models.edge_cnn2.predict_proba(crops[need]))]
                     for k, head in enumerate(EP):
                         # theo từng đầu ra: "cnn" = thay bằng CNN, "avg" = trung bình MLP và CNN.
                         # CNN đọc kiểu nét tốt hơn hẳn, nhưng với ảnh mờ (sigma 1) nó đọc bậc thang / một chiều kém MLP

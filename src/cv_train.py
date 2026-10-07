@@ -3,6 +3,7 @@
     python src/cv_train.py dev      # học trên train, đo trên validation  -> outputs/models_dev/
     python src/cv_train.py final    # học trên train + validation          -> outputs/models_final/
 """
+import os
 import sys
 import time
 
@@ -24,14 +25,21 @@ SPECS = {   # tên: (khóa dữ liệu, lớp ẩn, đầu ra, số epoch, lr)
 def load(split, key):
     if key != "det":
         d = np.load(CACHE / f"cvdata_{split}.npz")
-        return d[key + "_x"], d[key + "_y"]
-    d = np.load(CACHE / f"cvdet_{split}.npz")
-    X, Y = d["det_x"], d["det_y"]
-    hp = CACHE / f"cvhard_{split}.npz"
-    if hp.exists():          # âm bản khó (cv_hardneg.py): lặp 2 lần để tăng trọng số
-        h = np.load(hp)
-        print(f"   + {len(h['det_y'])} mẫu khó ({split})")
-        X = np.concatenate([X, h["det_x"], h["det_x"]]); Y = np.concatenate([Y, h["det_y"], h["det_y"]])
+        X, Y = d[key + "_x"], d[key + "_y"]
+    else:
+        d = np.load(CACHE / f"cvdet_{split}.npz")
+        X, Y = d["det_x"], d["det_y"]
+        hp = CACHE / f"cvhard_{split}.npz"
+        if hp.exists():          # âm bản khó (cv_hardneg.py): lặp 2 lần để tăng trọng số
+            h = np.load(hp)
+            print(f"   + {len(h['det_y'])} mẫu khó ({split})")
+            X = np.concatenate([X, h["det_x"], h["det_x"]]); Y = np.concatenate([Y, h["det_y"], h["det_y"]])
+    mp = CACHE / (f"cvmultimlp_{split}.npz" if key in ("det", "node", "al") else f"cvmulti_{split}.npz")
+    if os.environ.get("MULTI", "0") == "1" and key in ("det", "node", "al", "edge") and mp.exists():
+        # (đợt 19) bản tăng cường nhiều lớp (cv_data.py train multi): xoay / thu nhỏ / mờ / màu / nhiễu / JPEG chồng nhau
+        m = np.load(mp)
+        print(f"   + {len(m[key + '_y'])} mẫu tăng cường nhiều lớp ({split})")
+        X = np.concatenate([X, m[key + "_x"]]); Y = np.concatenate([Y, m[key + "_y"]])
     return X, Y
 
 
@@ -44,7 +52,7 @@ def main(mode, only=None):
             continue
         X, Y = load("train", key)
         Xv, Yv = load("validation", key)
-        if mode == "final":
+        if mode.startswith("final"):
             X, Y = np.concatenate([X, Xv]), np.concatenate([Y, Yv])
         t = time.time()
         print(f"== {name}: {X.shape} -> hidden {hidden} heads {heads}", flush=True)

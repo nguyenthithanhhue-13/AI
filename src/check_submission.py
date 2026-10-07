@@ -82,8 +82,8 @@ for f in sorted((OUT / f"models_{mode}").glob("*.npz")):
     n = MLP.load(f).n_params
     total += n
     print(f"   {f.name:28s} {n:>12,}")
-for name in ("node_cnn", "edge_cnn", "swatch_cnn", "weather_cnn"):     # các CNN (ONNX) nếu có
-    cnn_txt = OUT / f"models_{mode}" / f"{name}_params.txt"
+for name in ("node_cnn", "edge_cnn", "swatch_cnn", "weather_cnn", "edge2/edge_cnn"):     # các CNN (ONNX) nếu có
+    cnn_txt = OUT / f"models_{mode}" / f"{name}_params.txt"       # edge2/: CNN đoạn đường thứ hai (đợt 19, lấy trung bình)
     if cnn_txt.exists() and (OUT / f"models_{mode}" / f"{name}.onnx").exists():
         n = int(cnn_txt.read_text())
         total += n

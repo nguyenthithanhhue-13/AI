@@ -1,3 +1,152 @@
+# Cập nhật đợt 20 (07/10, tối): tham chiếu gần / xa BỊ PHỦ ĐỊNH — ứng viên v41
+
+**Bản ứng viên: `outputs/cac_ban_nop_cu/predictions_v41_negref.json`** (bản đồ test của v35 + bộ đọc v35 đã lưu
+`outputs/nlp2_final.pkl` + mã `src/nlp2.py` đợt 20). So với v35: Changed maps 20 | Changed robots 120 | Difference 0,00300.
+`outputs/predictions.json` VẪN là v35 (bài đã nộp); mã nguồn v35 cũ: `outputs/cac_ban_nop_cu/nlp2_v35_src.py.bak`.
+
+## Phát hiện chính: "X không xa Y" (= gần Y) bị đọc thành "xa Y"
+
+- Train + validation: **0 câu** có phủ định đứng sát từ quan hệ ("không xa / không ở gần / chẳng gần / cách Y không xa").
+  Bộ phân loại tham chiếu (n-gram ký tự) chưa từng thấy phủ định, chỉ nhìn chữ "xa" / "gần", đọc NGƯỢC với độ tin >= 0,9
+  -> v35 đi theo bộ phân loại. Luật `rule_direction` hiểu phủ định nhưng chỉ thắng khi bộ phân loại < 0,9.
+- `REF_NEG_FIX`: phủ định ĐỨNG SÁT từ quan hệ (`NEG_REL`, `NEG_POST`) -> luật thắng; phủ định ở xa ("X, không cần vội, gần
+  Y hơn") KHÔNG còn lật nghĩa (lỗi cũ của luật); cụm phủ định tham chiếu không làm X thành địa điểm gây nhiễu
+  ("X không phải cái gần Y"); tên không nuốt chữ "không / chẳng" ("giảng đường | chẳng xa Y").
+- Đếm (không đọc câu): luật gặp tham chiếu gần / xa có phủ định sát **0 lần trên train + validation, 55 lần trên test**;
+  bật `REF_NEG_FIX` đổi nhiệm vụ ở **28 cảnh test** -> 17 bản đồ / 101 dòng dự đoán. Train / validation: không đổi gì.
+- Phép thử tự soạn `scratch/h100_neg_ref_probe.py` (12 cách nói phủ định x tên quen, có / không dấu): **0,475 -> 1,000**.
+- Ước lượng bảng công khai (~15% cảnh test): ~2-3 bản đồ ~ 15 dòng -> nếu đúng: 0,9828 -> ~0,991.
+
+## Các sửa tổng quát khác (đều đo trên câu tự soạn + train / validation; số dòng test đổi do riêng từng công tắc)
+
+| công tắc | nội dung | phép thử | dòng test |
+|---|---|---|---|
+| `PREP_CANON` | "chuyển / mang / đưa / đem / chở ... SANG / VÀO / VỀ / RA X" -> "tới X" (0 lần "sang" sau động từ giao trong dữ liệu); "đem / chở" -> "mang" | tên lạ x khung mới `h90`: 0,743 -> 0,956 | 19 (3 map) |
+| `TAIL_FIX` | "liền / ngay lập tức / trong 15 phút" không dính vào tên lạ; "Qua X lấy ..." đầu vế | h90 | 0 |
+| `TYPE_FIX4` | từ khóa loại mới (an ninh, pháp chế, thủ quỹ, mô phỏng, quầy chè...), "an" ≠ "ăn" (an ninh, luận án, dự án) | h28 giấu tên 0,963 -> 0,975 (dấu) | 0 |
+| `DIS_UNAVAIL` | "X đang sửa chữa / nghỉ / khóa cửa / ngừng hoạt động" = gây nhiễu; "tuần trước" không phải "X trước"; "đừng dừng ở X", "chưa cần tới X" | `h94`: 550 -> 590+/600 | 0 |
+| `FLAG_BOUND` | mọi nhánh mẫu gấp / dễ vỡ khớp TRỌN TỪ ("roi cung" không khớp "trời cũng", "tu tu" không khớp "từ tuần") | train + val: 0 câu đổi | 0 |
+| `REF_NEG_DIR`, `DNEG_FIX` | "không nằm ở phía bắc" = bản phía nam; "không phải không gấp" = gấp | câu tự soạn | 0 |
+
+Chuỗi kiểm tra (`checks_v41*.log`, so với v34c): h22 0,9992 / 1 / 1 (không đổi); h48 1.186 -> 1.193 / 1.196, train
+1.982 -> 1.991 / 2.000; h31 0,990 -> 0,997; h35 bắc / nam 108 -> 120 / 120; h45 gần / xa 197 -> 198 / 200; h34 1,0000.
+
+# Cập nhật đợt 19 (07/10, chiều): tăng cường ảnh NHIỀU LỚP cho CV
+
+v35 (0,9828) đã nộp và là bài được tính. Hai cách "bỏ phiếu" không đổi được gì đáng kể: bỏ phiếu đa nhiễu cho CV
+(0 bản đồ đổi), bỏ phiếu giữa 7 lần học lại bộ đọc câu (1 cảnh / 5 dòng, `predictions_v39_refit_vote.json`, kiểu tung
+đồng xu -> không nộp).
+
+## Tăng cường nhiều lớp (`cv_data.degrade_multi`, `python src/cv_data.py train multi`)
+
+Mỗi ảnh train / validation được làm méo bằng một chuỗi lớp, mỗi lớp bật ngẫu nhiên, chồng theo thứ tự của một ảnh
+chụp / quét thật: (1) xoay thêm tới 4,5° và thu nhỏ 0,8-1 (bản đồ dày hơn -> ký hiệu nhỏ hơn; nới khung để không cắt
+góc) -> (2) mất độ phân giải (thu nhỏ 0,55-0,9 rồi phóng lại) -> (3) mờ Gauss 0,4-1,7 hoặc nhòe chuyển động ->
+(4) độ sáng / tương phản / gamma / độ bão hòa / lệch cân bằng trắng (chung cho cả ảnh) -> (5) nhiễu hạt -> (6) JPEG
+20-70, đôi khi nén hai lần. Mọi tọa độ chú thích (tâm giao lộ, khung chú giải, khung thời tiết) đi theo phép biến đổi
+(`warp_scene`, đã vẽ kiểm tra trên 4 kiểu vẽ). -> `cache/cvmulti_{train,validation}.npz` (4 CNN) và
+`cache/cvmultimlp_*.npz` (bộ dò / căn tâm / MLP giao lộ).
+
+Học: 4 CNN **tinh chỉnh tiếp** từ trọng số cũ 2 epoch trên (dữ liệu cũ + làm méo mạnh + nhiều lớp), max_lr 1e-3
+(`INIT=1 MULTI=1`, `bash scratch/train_multi.sh devm|finalm`); MLP căn tâm + MLP giao lộ học lại có thêm dữ liệu nhiều
+lớp (`MULTI=1 python src/cv_train.py devm node align`). Mô hình ra thư mục riêng (`models_devm`, `models_finalm`), không
+đè bộ đang nộp. Bộ dò (MLP det) giữ nguyên.
+
+Suy luận: `EDGE_CNN_TH=2` -> CNN đoạn đường đọc MỌI đoạn (trước chỉ đoạn MLP không chắc; MLP sai rất tự tin ở bậc thang /
+một chiều: validation gốc 6 cảnh sai đoạn -> 0). CNN đoạn đường thứ hai trong `edge2/` (bản cũ) được lấy trung bình với
+bản mới: mảnh validation sạch 0 / 0 / 0 lỗi (mới một mình: 0 / 0 / 1), mảnh tăng cường 5 / 7 / 11 (cũ: 77 / 84 / 29).
+
+## Đo độ bền (validation, mô hình chỉ học train; nhiệm vụ đúng -> chỉ đo CV)
+
+`scratch/h24_cv_stress.py` có thêm `down`, `contrast`, `gamma`, `noise`, `expand` (xoay nới khung: xoay giữ khung từng
+đẩy biểu tượng thời tiết sát mép ra ngoài ảnh -> 10 lỗi giả); `bash scratch/eval_multi.sh <bộ>`;
+bảng: `python scratch/h81_stress_table.py dev,deve,devm,devme clean,r3e,d75n6,c75g13,b12j25`.
+
+| kiểu méo chồng lên validation | cũ (dev) | cũ + CNN đọc mọi đoạn | mới + CNN đọc mọi đoạn + gộp 2 CNN đoạn đường |
+|---|---|---|---|
+| không thêm | 1,0000 · 294/300 bản đồ đúng | 1,0000 · 300/300 | **1,0000 · 300/300** |
+| xoay thêm 3° (nới khung) + JPEG 50 | 0,9970 · 292 | | **0,9997** · 292 |
+| thu nhỏ 0,75 + nhiễu 6 + JPEG 45 | 1,0000 · 300 | | 1,0000 · 299 |
+| tương phản 0,75 + gamma 1,3 + mờ 0,8 + JPEG 40 | **0,8130 · 120** | 0,8130 · 120 | **0,9950 · 290** |
+| mờ 1,2 + JPEG 25 | 1,0000 · 297 | | 1,0000 · 295 (2 lỗi bậc thang / một chiều vô hại) |
+
+Riêng CNN chú giải mới đã đưa kiểu tương phản / gamma từ 0,813 lên 0,887 (đọc chú giải sai 75 -> 0 cảnh, thời tiết sai
+36 -> 0 vì tìm đúng dòng "Thời tiết" trong chú giải). Lỗi còn lại ở kiểu đó: bộ dò giao lộ (2 cảnh kiểu "print").
+Lưu ý: ảnh test do cùng bộ sinh (xoay / mờ / JPEG); kiểu tương phản / gamma có thể không có trên test.
+
+## Trên test: CV mới đọc y hệt CV cũ -> v40 = v35
+
+| so sánh (1.200 ảnh test, chỉ đếm bản đồ dự đoán) | bản đồ khác | dòng dự đoán khác |
+|---|---|---|
+| dev -> devme (mô hình chỉ học train) | 1 (đoạn đường) | |
+| dev -> final (bộ đang nộp) | 7 (đoạn đường; devme đứng về phía dev ở cả 7; chỉ map 968 đổi 2 robot) | |
+| **final -> finalm (v40)** | **2 (đoạn đường)** | **0 -> v40 trùng v35 hoàn toàn, KHÔNG nộp** |
+
+Kết luận: ảnh test nằm trong vùng CV đọc ổn định (bộ CV bền hơn hẳn trên phép thử méo nặng vẫn ra đúng các bản đồ cũ).
+Phần mất điểm trên bảng xếp hạng (~31 dòng công khai, ~5 cảnh sai chặng đầu) KHÔNG đến từ CV mà từ đọc câu — nhiều khả
+năng đoán loại tên gọi mới (~36% đích test là tên lạ × ~5% sai ≈ 1,8% cảnh ≈ 3 cảnh công khai). Luật "có tham chiếu ->
+loại đích có >= 2 bản" (train 240/240, validation 116/116) đã có sẵn trong `resolve_with_map` (`need_two`, `CLEAR_REF`).
+Mô hình CV mới để ở `outputs/models_finalm` (không thay `models_final` vì không đổi kết quả).
+
+## Tìm đòn bẩy còn lại ở đọc câu (chỉ đếm kết quả dự đoán test, không đọc câu)
+
+- Đích là tên lạ ở 441 / 1.200 cảnh test; 39 cảnh có xác suất loại (trong các loại có trên bản đồ) < 0,9 (5 cảnh < 0,5).
+  Phép thử tên tự soạn hoàn toàn mới (`AI_dev/scratch/h28_knowledge_holdout.py`): trong câu 0,963 (có dấu) / 0,933 (không
+  dấu); lỗi còn lại là khái niệm không có trong phần kho còn lại ("ga ra", "phòng CTSV", "đoàn trường"...).
+- Bộ phân loại VAI bằng nghĩa e5 (`ROLE_E5_W`, `AI_dev/scratch/h83_role_e5.py`): validation (học train) 300/300 ở mọi mức;
+  trên test chỉ đổi 2-4 bản đồ / 9-19 dòng so với khi tắt -> luật đang quyết định thống nhất; không phải đòn bẩy.
+- Tỉ lệ (nhãn train / validation -> dự đoán test): tham chiếu đích 12% / 39% -> 35%, điểm ghé 32% / 50% -> 49%, gấp 39% / 38%
+  -> 37%, DỄ VỠ 40% / 37% -> 45%. Phần dễ vỡ dư là do e5 tự nhận (74 cảnh) — đã được bảng xếp hạng xác nhận ĐÚNG (v31c).
+- Tắt từng công tắc cờ (`h84_flag_sources.py`, test) và đo trên câu cờ tự soạn A / B / C (`h85_flag_switch_probe.py`):
+  gốc 138/138, 96/100, 99/100; tắt `E5_POS_URGENT` / `PART_OR` / `VETO_NEEDS_NEG` / `CALM_WINS` đều làm B hoặc C kém đi
+  -> các công tắc chưa A/B trên bảng xếp hạng đều có bằng chứng là đúng; A/B tắt chúng nhiều khả năng chỉ tốn lượt.
+
+- Đoán loại tên lạ KHÔNG DẤU bằng e5 trên cả dạng khôi phục dấu lẫn dạng gốc (`E5_BOTH_FORMS`, mặc định tắt): h28 không dấu
+  trong câu 0,933 -> 0,939, có dấu giữ 0,963; trên test 0 dòng đổi.
+
+Kết luận đợt 19: không có bản nào có bằng chứng hơn v35. v35 giữ nguyên là bài được tính.
+
+**Kiểm tra tái lập (luật 8.5)**: `PROCS=6 python scratch/h87_repro.py` chạy lại TOÀN BỘ suy luận trên 1.200 ảnh test từ
+mô hình đã lưu (bộ dò, CV, đọc câu, chiến thuật; không dùng cache nào; 23 phút): **khác v35 0 dòng**.
+
+# Cập nhật đợt 18 (07/10, ban ngày): đo test bằng A/B, phép thử khó hơn
+
+## Bảng xếp hạng
+
+| bài | điểm | robot yếu nhất | ghi chú |
+|---|---|---|---|
+| v34c (`predictions_v34c_spans_flags.json`) | 0,9828 | | khác v32b 45 dòng / 16 cảnh |
+| v35 (`predictions_v35_cand.json`) | **0,9828** | 0,9722 | bài được tính (bằng điểm, nộp sau cùng) |
+| 36C: tắt `CACH_RULE` + `GOAL_FRAME_RULE` + `REACH_RULE` | 0,9772 | | -10 dòng công khai -> ba luật ĐÚNG trên test |
+| 36A: tắt `NEW_FRAME_FIX` | 0,9800 | | -5 dòng -> luật khung câu mới ĐÚNG trên test |
+
+Tập công khai: 180 cảnh (1.800 dòng). Cột thứ ba của bảng xếp hạng là accuracy của robot YẾU NHẤT: 0,9722 = 5/180 sai
+trong khi tổng sai khoảng 31 dòng -> lỗi rải đều các robot = khoảng 4 cảnh công khai sai CHẶNG ĐẦU (đích / điểm ghé /
+tham chiếu). Đội đầu (0,9972, robot yếu nhất 0,9944) không có lỗi kiểu cảnh nào.
+
+## Chẩn đoán không cần nhãn (chỉ đếm / chạy dự đoán, không đọc test)
+
+- CV: chạy lại 1.200 ảnh test có nhiễu nhẹ (xoay 0,6°, JPEG 90): 6 bản đồ đổi; bộ CV dev và final khác nhau 7 bản đồ;
+  làm méo validation nặng (JPEG 30, xoay 1,5°, mờ 1,0): 10 robot đúng 100%; mạng đường validation không trùng train.
+- Chiến thuật: đổi các trọng số còn "hở" trong toàn khoảng hợp lệ -> 0 dòng test đổi; mọi bản đồ test hợp lệ theo luật đề.
+- Tắt từng công tắc luật (`scratch/h71_flag_ablation.py`): chỉ vài bộ luật đổi test (bảng trong log) — đã A/B hai bộ lớn.
+- Bất thường duy nhất: bộ phân loại vai (n-gram) không chắc (< 0,6) ở 15% cảnh test so với 2% validation; luật quyết định
+  ở các chỗ đó (e5 đồng ý 145/212).
+
+## Phép thử khó hơn (tất cả tự soạn / từ train + validation)
+
+- `h63_combo.py` (tên lạ + gõ sai + bỏ dấu; `--long`: tên dài 5-8 chữ): tên dài 98,49% -> 98,83% sau khi sửa đuôi tên
+  ("tầng trệt", "khu mới", "dành cho cán bộ"...) và "điểm ghé cùng loại đích = cùng một nơi".
+- `h75_recombine.py` (ghép vế câu thật, nhiều vế gây nhiễu): 98,71% -> 99,17%.
+- `h76_typo_frames.py` (gõ sai từng chữ khung của vế gây nhiễu): 207 -> 109 lần đổi vai sau `TYPO_FIX2`
+  ("hông cần ghé", "ã rời", "đừng hầm với").
+- `h35_spatial.py`: "phía đầu bản đồ" (bị đọc thành NAM) / "phía cuối bản đồ" -> 100% (`DIR_MORE`).
+- Khung người nhận "giao ... cho <người có nghề>", "Người nhận là X" (`RECIP_FRAME`).
+- Thử mô hình e5-small + LoRA (`src/role_lm.py`) cho vai và cho loại tên: không tốt hơn cách hiện tại -> tắt.
+
+Tất cả các sửa trên: validation / giấu tên vẫn 0,9992 / 1,0000 / 1,0000, nhưng **đổi 0 dòng test**: các kiểu lỗi tìm được
+bằng phép thử không có trên test.
+
 # Cập nhật đợt 17 (07/10, 0h-2h): v34c, sửa lỗi của v33
 
 **v33 có lỗi**: luật "mốc phải đứng sau từ quan hệ" (`ANCHOR_NEEDS_REL`) biến địa điểm đang bị né ("Nhớ né X ra.") thành

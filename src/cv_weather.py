@@ -33,16 +33,16 @@ def main(mode, epochs=10):
     torch.manual_seed(0); np.random.seed(0)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     d = np.load(CACHE / "cvdata_train.npz"); X, Y = d["we_x"], d["we_y"]
-    X, Y = with_strong(X, Y, "we")
     dv = np.load(CACHE / "cvdata_validation.npz"); Xv, Yv = dv["we_x"], dv["we_y"]
-    if mode == "final":
-        X, Y = np.concatenate([X, Xv]), np.concatenate([Y, Yv])
-    net = build_net().to(dev)
+    X, Y = with_strong(X, Y, "we", mode, extra=[(Xv, Yv)] if mode.startswith("final") else [])
+    net = build_net()
+    init_from(net, "weather_cnn.pt", mode)
+    net = net.to(dev)
     print(f"CNN thời tiết ({dev}): {len(X)} mẫu, {sum(p.numel() for p in net.parameters()):,} tham số", flush=True)
     bs = 128
     steps = epochs * (len(X) // bs + 1)
     opt = torch.optim.AdamW(net.parameters(), lr=2e-3, weight_decay=1e-4)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=3e-3, total_steps=steps)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=float(os.environ.get("MAX_LR", "3e-3")), total_steps=steps)
     Xg = torch.from_numpy(X); Yg = torch.from_numpy(Y.astype(np.int64))
     Xvg = torch.from_numpy(Xv).to(dev); Yvg = torch.from_numpy(Yv.astype(np.int64)).to(dev)   # nhỏ (1800 mẫu)
 

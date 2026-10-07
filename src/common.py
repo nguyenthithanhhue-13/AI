@@ -91,14 +91,52 @@ def mission_from_scene(s):
     }
 
 
-def with_strong(X, Y, key):
+def with_strong(X, Y, key, mode="dev", extra=()):
     """Nối thêm bản làm méo MẠNH (cache/cvstrong_train.npz, tạo bằng `cv_data.py train strong`) vào dữ liệu train
-    của một CNN. Tắt bằng biến môi trường USE_STRONG=0."""
+    của một CNN. Tắt bằng biến môi trường USE_STRONG=0.
+    (đợt 19) MULTI=1: nối thêm bản tăng cường NHIỀU LỚP (cvmulti_train.npz, cvmulti2_train.npz nếu có, và
+    cvmulti_validation.npz khi học final). `extra`: các cặp (X, Y) nối cùng lúc (vd validation khi học final).
+    Nối MỘT lần vào mảng cấp sẵn, đọc từng file rồi bỏ: không tốn gấp đôi RAM như np.concatenate liên tiếp."""
     import os
+    import zipfile
     import numpy as np
-    f = CACHE / "cvstrong_train.npz"
-    if os.environ.get("USE_STRONG", "1") != "1" or not f.exists():
+    files = []
+    if os.environ.get("USE_STRONG", "1") == "1" and (CACHE / "cvstrong_train.npz").exists():
+        files.append(CACHE / "cvstrong_train.npz")
+    if os.environ.get("MULTI", "0") == "1":
+        names = ["cvmulti_train.npz", "cvmulti2_train.npz"] + (["cvmulti_validation.npz"] if mode.startswith("final") else [])
+        files += [CACHE / n for n in names if (CACHE / n).exists()]
+
+    def rows_of(f):
+        with zipfile.ZipFile(f) as z, z.open(key + "_x.npy") as fh:
+            v = np.lib.format.read_magic(fh)
+            return np.lib.format._read_array_header(fh, v)[0][0]
+
+    sizes = [rows_of(f) for f in files] + [len(x) for x, _ in extra]
+    if not sizes:
         return X, Y
-    d = np.load(f)
-    print(f"   + {len(d[key + '_x'])} mẫu làm méo mạnh ({key})", flush=True)
-    return np.concatenate([X, d[key + "_x"]]), np.concatenate([Y, d[key + "_y"]])
+    N = len(X) + sum(sizes)
+    Xo = np.empty((N,) + X.shape[1:], X.dtype); Yo = np.empty((N,) + Y.shape[1:], Y.dtype)
+    Xo[:len(X)] = X; Yo[:len(X)] = Y
+    pos = len(X)
+    for f, n in zip(files, sizes):
+        d = np.load(f)
+        Xo[pos:pos + n] = d[key + "_x"]; Yo[pos:pos + n] = d[key + "_y"]; pos += n
+        print(f"   + {n} mẫu từ {f.name} ({key})", flush=True)
+        del d
+    for x, y in extra:
+        Xo[pos:pos + len(x)] = x; Yo[pos:pos + len(x)] = y; pos += len(x)
+    return Xo, Yo
+
+
+def init_from(net, name, mode):
+    """(đợt 19) INIT=1: tinh chỉnh tiếp từ trọng số đã học (models_dev cho bản dev*, models_final cho bản final*)
+    thay vì học lại từ đầu."""
+    import os
+    import torch
+    if os.environ.get("INIT", "0") != "1":
+        return False
+    base = OUT / ("models_final" if mode.startswith("final") else "models_dev") / name
+    net.load_state_dict(torch.load(base))
+    print("   tinh chỉnh tiếp từ", base, flush=True)
+    return True

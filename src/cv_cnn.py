@@ -6,6 +6,7 @@ Huấn luyện bằng PyTorch trên CPU, xuất ra ONNX; khi dự đoán chỉ c
     python src/cv_cnn.py dev        # học train, đo validation   -> outputs/models_dev/node_cnn.onnx
     python src/cv_cnn.py final      # học train + validation     -> outputs/models_final/node_cnn.onnx
 """
+import os
 import sys
 import time
 
@@ -42,17 +43,19 @@ def main(mode, epochs=8):
     torch.manual_seed(0)
     tr = np.load(CACHE / "cvcnn_train.npz"); va = np.load(CACHE / "cvcnn_validation.npz")
     X, Y = tr["cn_x"], tr["cn_y"]
-    X, Y = with_strong(X, Y, "cn")
     Xv, Yv = va["cn_x"], va["cn_y"]
-    if mode == "final":
-        X, Y = np.concatenate([X, Xv]), np.concatenate([Y, Yv])
+    # bản final* học thêm validation (mode "final" cũ, "finalm" = bản tăng cường nhiều lớp của đợt 19)
+    X, Y = with_strong(X, Y, "cn", mode, extra=[(Xv, Yv)] if mode.startswith("final") else [])
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    net = build_net().to(dev)
+    net = build_net()
+    init_from(net, "node_cnn.pt", mode)
+    net = net.to(dev)
     n_params = sum(p.numel() for p in net.parameters())
     print(f"CNN giao lộ: {n_params:,} tham số; {len(X)} mẫu huấn luyện", flush=True)
     opt = torch.optim.AdamW(net.parameters(), lr=2e-3, weight_decay=1e-4)
     steps = epochs * (len(X) // 128 + 1)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=3e-3, total_steps=steps)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=float(os.environ.get("MAX_LR", "3e-3")), total_steps=steps)
+    (OUT / f"models_{mode}").mkdir(exist_ok=True)
     lossf = torch.nn.CrossEntropyLoss(label_smoothing=0.05)
     rng = np.random.default_rng(0)
     # giữ dữ liệu đo trên CPU rồi chuyển từng lô: GPU 4 GB không chứa nổi cả mảng (gây tráo bộ nhớ, chậm 10 lần)
