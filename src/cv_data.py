@@ -4,6 +4,7 @@
     python src/cv_data.py validation
     python src/cv_data.py train 100        # thử nhanh trên 100 cảnh
 """
+import os
 import sys
 import time
 from multiprocessing import Pool
@@ -14,15 +15,58 @@ from common import *
 from cvfeat import *
 
 
+def degrade_strong(img, rng):
+    """Làm méo MẠNH hơn mức có trong train (validation đã méo hơn train: JPEG 45-75 so với 60-85; test có thể còn hơn):
+    chồng thêm mờ (sigma 0.6-1.6) và nén JPEG (chất lượng 25-65) lên ảnh (kể cả ảnh vốn đã méo)."""
+    out = img
+    if rng.random() < 0.7:
+        out = cv2.GaussianBlur(out, (0, 0), float(rng.uniform(0.6, 1.6)))
+    if rng.random() < 0.85:
+        q = int(rng.integers(25, 66))
+        ok, buf = cv2.imencode(".jpg", cv2.cvtColor(out, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, q])
+        out = cv2.cvtColor(cv2.imdecode(buf, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+    return out
+
+
+STRONG_AUG = os.environ.get("STRONG_AUG", "0") == "1"   # (gộp chung vào cvdata_train làm tràn RAM: dùng build_strong)
+STRONG_KEYS = ("edge_x", "edge_y", "cn_x", "cn_y", "sw_x", "sw_y", "we_x", "we_y")
+
+
+def _strong_job(args):
+    d = build_scene(args)
+    return {k: d[k] for k in STRONG_KEYS}
+
+
+def build_strong(split="train", n=None, procs=8):
+    """Bản làm méo MẠNH (degrade_strong), chỉ các mảnh cho 4 CNN -> cache/cvstrong_{split}.npz.
+    Thu kết quả dần (imap) để không tràn RAM."""
+    scenes = load_split(split)[2]
+    idx = list(range(len(scenes)))[:n] if n else list(range(len(scenes)))
+    acc = {k: [] for k in STRONG_KEYS}
+    t = time.time()
+    with Pool(procs) as p:
+        for k_, d in enumerate(p.imap_unordered(_strong_job, [(split, scenes[i], i, 2) for i in idx], chunksize=4)):
+            for k in STRONG_KEYS:
+                if len(d[k]):
+                    acc[k].append(d[k])
+            if k_ % 200 == 0:
+                print(f"   {k_}/{len(idx)} ảnh ({time.time() - t:.0f}s)", flush=True)
+    data = {k: np.concatenate(v) for k, v in acc.items()}
+    np.savez(CACHE / f"cvstrong_{split}.npz", **data)
+    print("đã lưu", CACHE / f"cvstrong_{split}.npz", {k: v.shape for k, v in data.items()}, f"{time.time() - t:.0f}s")
+
+
 def centers_of(s):
     return [((l["swatch"][0] + l["swatch"][2]) / 2, (l["swatch"][1] + l["swatch"][3]) / 2) for l in s["legend"]]
 
 
 def build_scene(args):
     split, s, idx, aug = args
-    rng = np.random.default_rng(idx * 7 + (1000003 if aug else 0))
+    rng = np.random.default_rng(idx * 7 + (1000003 if aug else 0) + (2000003 if aug == 2 else 0))
     rgb = read_rgb(DATA / split / s["image"])
-    if aug:
+    if aug == 2:
+        rgb = degrade_strong(rgb, rng)
+    elif aug:
         rgb = degrade(rgb, rng)
     im = Img(rgb)
     W, H = im.w, im.h
@@ -200,6 +244,8 @@ def build(split, limit=None, aug=True, procs=11):
     if aug:   # thêm một bản "xuống cấp" cho các ảnh sạch
         jobs += [(split, s, i, True) for i, s in enumerate(scenes)
                  if s["degradation"]["blur"] == 0 and s["degradation"]["jpeg_quality"] is None]
+        if STRONG_AUG:   # thêm một bản làm méo mạnh cho MỌI ảnh
+            jobs += [(split, s, i, 2) for i, s in enumerate(scenes)]
     t = time.time()
     with Pool(procs) as p:
         parts = p.map(build_scene, jobs, chunksize=8)
@@ -212,7 +258,10 @@ def build(split, limit=None, aug=True, procs=11):
 
 if __name__ == "__main__":
     split = sys.argv[1]
-    what = sys.argv[2] if len(sys.argv) > 2 else "all"      # all | det | crops | cnn
+    what = sys.argv[2] if len(sys.argv) > 2 else "all"      # all | det | crops | cnn | strong
+    if what == "strong":
+        build_strong(split, int(sys.argv[3]) if len(sys.argv) > 3 else None)
+        sys.exit()
     data = build(split, None, aug=(split == "train"))
     if what in ("cnn", "all"):       # dữ liệu cho CNN giao lộ (gồm lớp 15 "không phải giao lộ")
         np.savez(CACHE / f"cvcnn_{split}.npz", cn_x=data["cn_x"], cn_y=data["cn_y"])

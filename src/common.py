@@ -89,3 +89,16 @@ def mission_from_scene(s):
         "urgent": m["urgent"],
         "fragile": m["fragile"],
     }
+
+
+def with_strong(X, Y, key):
+    """Nối thêm bản làm méo MẠNH (cache/cvstrong_train.npz, tạo bằng `cv_data.py train strong`) vào dữ liệu train
+    của một CNN. Tắt bằng biến môi trường USE_STRONG=0."""
+    import os
+    import numpy as np
+    f = CACHE / "cvstrong_train.npz"
+    if os.environ.get("USE_STRONG", "1") != "1" or not f.exists():
+        return X, Y
+    d = np.load(f)
+    print(f"   + {len(d[key + '_x'])} mẫu làm méo mạnh ({key})", flush=True)
+    return np.concatenate([X, d[key + "_x"]]), np.concatenate([Y, d[key + "_y"]])

@@ -42,6 +42,7 @@ def main(mode, epochs=8):
     torch.manual_seed(0)
     tr = np.load(CACHE / "cvcnn_train.npz"); va = np.load(CACHE / "cvcnn_validation.npz")
     X, Y = tr["cn_x"], tr["cn_y"]
+    X, Y = with_strong(X, Y, "cn")
     Xv, Yv = va["cn_x"], va["cn_y"]
     if mode == "final":
         X, Y = np.concatenate([X, Xv]), np.concatenate([Y, Yv])
@@ -72,6 +73,8 @@ def main(mode, epochs=8):
             if (i // 128) % 300 == 0:
                 print(f"      ep {ep + 1} bước {i // 128}/{len(X) // 128} ({time.time() - t0:.0f}s)", flush=True)
             idx = np.sort(perm[i:i + 128])
+            if len(idx) < 32:
+                continue          # lô cuối quá nhỏ: BatchNorm trên vài mẫu làm gradient nhảy vọt (xem cv_edge.py)
             xb = torch.from_numpy(to_input(X[idx])).to(dev); yb = torch.from_numpy(Y[idx].astype(np.int64)).to(dev)
             dx, dy = rng.integers(-2, 3, 2)          # dịch ngẫu nhiên thêm vài pixel
             xb = torch.roll(xb, shifts=(int(dy), int(dx)), dims=(2, 3))

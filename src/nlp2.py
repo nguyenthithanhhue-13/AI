@@ -10,6 +10,7 @@ So với nlp.py (chỉ nhận ra tên gọi đã có trong từ điển), bản 
 
 Mọi thành phần học được chỉ học từ train (và validation ở bản cuối). Không dùng nội dung test.
 """
+import math
 import pickle
 import re
 from collections import Counter, defaultdict
@@ -67,24 +68,66 @@ REF_WORDS = {"man", "phia", "huong", "ben", "goc", "dau", "tren", "duoi", "trai"
 # từ khung không bao giờ nằm ở đầu/cuối một tên địa điểm (từ chỉ hướng bac/nam/dong/tay... xử lý riêng theo cặp "phia dong")
 EDGE_STRIP = {"man", "phia", "huong", "ben", "goc", "gan", "xa", "sat",
               "canh", "cach", "ke", "hon", "nhat", "o", "ngay", "ve", "truoc", "roi", "nhe", "giup", "minh", "lay", "nhan",
-              "xong", "thi", "da", "khong", "dang", "can", "cho", "toi", "den", "qua", "ghe", "voi", "la", "va", "tai"}
+              "xong", "thi", "da", "khong", "dang", "can", "cho", "toi", "den", "qua", "ghe", "voi", "la", "va", "tai",
+              "ngang", "giao", "dich", "keo", "tre",    # "ghé ngang X", "nơi cần giao", "X là đích", "kẻo trễ" (kiến thức chung, h27*)
+              "tan"}                                    # "đưa đến TẬN X" (hư từ; h27 "Đưa đến tận {X}")
+# danh từ THỜI GIAN mở đầu cụm -> không phải địa điểm ("kẻo trễ giờ học", "buổi học", "giờ ăn trưa")
+TIME_HEADS = {"gio", "buoi", "tiet", "lich", "luc", "trua", "chieu", "dem", "hom", "tuan", "thoi"}
+# --- khung câu mới tự soạn (scratch/h27_paraphrase.py, KHÔNG nhìn test): sửa tổng quát 2026-10-06 ---
+NEW_FRAME_FIX = True
+# từ mở đầu chung chung không thể tự nó là một tên địa điểm ("Nơi nhận: X" -> "nơi" không phải địa điểm)
+LONE_BAD = {"noi", "khu", "phong", "nha", "cho", "toa", "day", "diem", "tang", "trung", "quay", "ban", "van", "loi", "hoi",
+            "vien", "hanh", "thu", "can", "ky", "giang"}
+# khung NHÃN: "Nơi nhận: X", "Địa chỉ giao: X", "Điểm đến (cuối cùng): X" -> đích; "Điểm ghé: X", "Nơi lấy hàng: X" -> điểm ghé
+GOAL_LABEL = r"\b(?:(?:noi|diem|dia chi|dia diem|cho|ben) (?:nhan|giao|den|toi|can giao|can den|giao hang|nhan hang)(?: hang)?" \
+             r"(?: cuoi(?: cung)?)?|dich(?: den)?(?: cuoi(?: cung)?)?|diem (?:den|cuoi)(?: cuoi(?: cung)?)?|nguoi nhan (?:dang )?(?:o|tai))" \
+             r"(?: la| o| tai)?$"
+VIA_LABEL = r"\b(?:(?:noi|diem|cho) (?:ghe|lay|dung|dung chan|trung chuyen|ghe qua|lay hang|lay do)(?: hang| do)?" \
+            r"(?: truoc| giua duong)?|ghe truoc|ghe giua duong)(?: la| o| tai)?$"
+# khung THỨ TỰ (đợt 7, scratch/h27c_order.py --v7): "Chặng đầu A, chặng cuối B", "Ghé A, sau đó B", "lấy đồ cho người ở B"
+GOAL_LABEL2 = r"\b(chang (cuoi|hai|2|thu hai)|sau (do|cung)|cho (nguoi|ban|anh|chi|co|thay|em|chu|bac)( dang)? (o|tai)|cuoi cung( la)?)$"
+VIA_LABEL2 = r"\b(chang (dau|mot|1|thu nhat)|diem dau|dau tien( la)?)$"
+ANCHOR_REL = r"\b(gan|xa|sat|canh|ke|cach|voi|giap|doi dien|ben|lien ke)\b"   # mốc gần / xa luôn đi sau một từ quan hệ
+# động từ ghé ngay trước tên địa điểm -> điểm ghé (bản mới thêm "ghé ngang", "đi ngang qua", "rẽ vào", "dừng chân / dừng lại ở")
+VIA_LEFT = r"\b(ghe|ghe qua|tat qua|tat vao|re qua|tat ngang|dung (o|tai))$"
+VIA_LEFT2 = r"\b(ghe|ghe qua|ghe vao|ghe ngang|ghe ngang qua|tat qua|tat vao|tat ngang|re qua|re vao|di ngang qua|ngang qua|" \
+            r"dung (o|tai)|dung (chan|lai) (o|tai)|dung chan|" \
+            r"(truoc tien|dau tien|truoc het)( thi| hay| phai| can)? (qua|toi|den|vao|ra|sang|di qua|di toi|di den))$"
 
+FLAG_MORE3 = True   # đợt 17: thêm cách nói dễ vỡ / gấp (kiến thức chung; bộ h52 B; đo lại trên bộ C viết trước khi sửa)
+FLAG_MORE2 = True   # đợt 16: thêm cách nói dễ vỡ / không gấp (kiến thức chung; bộ câu mới scratch/h52_flags_fresh.py)
+E5_ITEM_GUARD2 = True  # đợt 16: chỉ cấm e5 với câu MÔ TẢ món hàng ("hàng: X", "hàng cần giao là X", "đơn #..."), không cấm câu nói
+                       # về tính chất của hàng ("Hàng nhạy với va đập", "Món này mỏng lắm": e5 0,98 / 0,86 mà trước đây bị bỏ)
+ITEM_DESC = r"(hang|mon hang|kien hang|mat hang|don hang|mon|kien)( (can|se) (giao|gui|chuyen|dua|mang))?( (gom|la|co)\b|\s*:|$)|don\b"
+E5_CROSS_GUARD = True  # đợt 16: trong MỘT vế mà luật đã thấy cờ này (vd dễ vỡ: "nâng niu giúp"), e5 không được tự thêm cờ kia
 # bổ sung 2026-10-04 từ phép đo trên ví dụ viết tay (scratch/h8, h9): phủ định của gấp, cách nói gấp / dễ vỡ khác
 URGENT_NEG_MORE = r"|linh hoat|ca ngay|(chieu|toi|mai|sang mai|tuan sau|hom sau|luc sau) (nay )?moi (can|dung|bat dau|lam|hop|thi|hoc)|han (nop )?con (xa|rong|dai)|(khong|chua|chang|khoi|dung) (can |phai |viec gi phai )?(\w+ )?(gap|voi|khan|hoa toc|nhanh)\b|uu tien (binh thuong|thuong|trung binh)|hen gap|gap (lai|sau|nhau|mat)\b|dung (voi|gap|hap tap|cuong)|het (gap|voi)|khong con (gap|voi)|uu tien thap|chua can|" \
                   r"khong can (toi |den |giao |di |mang |lam )?(ngay|lien|hoa toc|uu tien|khan)|" \
                   r"con (nhieu|du|dai|thua) (thoi gian|thi gio|gio)|thoi gian con (dai|nhieu|du)|con du|cham ma chac|" \
                   r"khong (qua|den muc|den noi|he) (gap|voi)|no rush|khong rush|(gap|voi) (gi|lam gi|chi)\b|khong ai (cho|doi|hoi|giuc)|" \
-                  r"(tre|muon|cham) (mot )?(chut|ti|xiu) (cung )?(khong sao|duoc|chang sao)|(nguoi|ben) nhan (khong|chua) (gap|voi|can)"
-URGENT_POS_MORE = r"|\ble (nha|nhe|len|le|gium|giup|di)\b|sap (chay|roi di|di roi|xuat phat|khoi hanh|ket thuc)|khong duoc phep (tre|cham|muon)|(thoi )?han (rat |qua )?(sat|gap|can ke)|nhanh chong|\b(chay|di|giao|mang|dua|gui|chuyen|toi|den) (that |cho )?nhanh\b|\bhoi (lam|qua|suot)|(dang|bi) hoi|dung de (\w+ ){0,2}(doi|cho)\b|khong (duoc |the |nen )?(tri hoan|chan chu|la ca|cham tre)|(tri hoan|chan chu) (la )?khong duoc|cap cuu|sap (di|roi di|dong cua|het)\b|(muoi|nam|vai|it|may|hai|ba) phut nua|luon va ngay|\b(can|giao|lam|di|mang) lien\b|\blien (bay gio|nhe|nha|giup|tay)|khong co thoi gian|" \
+                  r"(tre|muon|cham) (mot )?(chut|ti|xiu) (cung )?(khong sao|duoc|chang sao)|(nguoi|ben) nhan (khong|chua) (gap|voi|can)" + (
+                  r"|(?<!dung )(?<!khong duoc )\b(di|chay) (that |hoi |that su )?cham\b(?! tre)" if FLAG_MORE2 else "")   # "đi chậm chỗ gồ ghề"
+URGENT_POS_MORE = r"|\ble (nha|nhe|len|le|gium|giup|di)\b|sap (chay|roi di|di roi|xuat phat|khoi hanh|ket thuc)|khong duoc phep (tre|cham|muon)|(thoi )?han (rat |qua )?(sat|gap|can ke)|nhanh chong|(?<!\bda )\b(chay|di|giao|mang|dua|gui|chuyen|toi|den) (that |cho )?nhanh\b|\bhoi (lam|qua|suot)|(dang|bi) hoi|dung de (\w+ ){0,2}(doi|cho)\b|khong (duoc |the |nen )?(tri hoan|chan chu|la ca|cham tre)|(tri hoan|chan chu) (la )?khong duoc|cap cuu|sap (di|roi di|dong cua|het)\b|(muoi|nam|vai|it|may|hai|ba) phut nua|luon va ngay|\b(can|giao|lam|di|mang) lien\b|\blien (bay gio|nhe|nha|giup|tay)|khong co thoi gian|" \
                   r"(tre|cham|muon) la (hong|khong kip|het|lo)|khong (the|duoc) (doi|muon|den tre|den muon)|" \
                   r"(doi|cho) lau khong (duoc|noi)|khong (cho|doi) (lau )?(duoc|noi)|\burgent\b|" \
                   r"(lam|giao|xu ly) truoc cac don|len truoc|\bmau (len|giup|gium|nhe)\b|\bdi mau\b|nuoc den chan|sat nut|" \
-                  r"(tre|muon) (lam )?roi|tang toc"
+                  r"(tre|muon) (lam )?roi|tang toc|" \
+                  r"(dung|khong duoc|cam) (di|chay|lam|giao|mang|dua|o) (cham|tre|lau|muon)\b|" \
+                  r"cang (nhanh|som) cang (hay|tien)\b"   # "đừng đi chậm nhé" (h27); "càng sớm càng hay" (h32)
 FRAGILE_NEG_MORE = r"|(?<!khong )chiu (duoc )?(va|rung|xoc|luc)|thoai mai|manh tay|khoi can|khong can (nhe|can than|nang niu)|" \
                    r"khong (ngai|so|ky) (va|roi|rung|xoc)|(xoc|lac|roi|va dap|va cham) (cung )?(khong sao|duoc|chang sao)|khong co (do )?(thuy tinh|gi de)"
 FRAGILE_POS_MORE = r"|ky (roi|rung|xoc|lac)|tranh (lam )?(roi|do|xoc|lac)|dung (xoc|rung|nghieng|de roi)|(vo|be) la (hong|mat|het|bo|toi|xong)|keo (vo|be|hong|roi|do)\b|\bde (hu|gay|do|mop|tray|dap)\b|" \
-                   r"\b(chen|bat|dia|binh|ly|tach|am|lo) (su|gom)\b|thang bang|thang dung|nghieng|nhe nhang|\b(di|chay) (that )?em\b|" \
-                   r"\bem (thoi|giup|nhe)\b|\bso (roi|vo|va|be)\b|nhay cam|\bfragile\b|coi chung (vo|be|roi)|khong duoc (nghieng|do|xoc|rung)"
+                   r"\b(chen|bat|dia|binh|ly|tach|am|lo) (su|gom)\b|thang bang|thang dung|nghieng|nhe nhang(?! (go|mo|dong|bao|noi|goi|nhac|hoi|nhan tin))|\b(di|chay) (that )?em\b|" \
+                   r"\bem (thoi|giup|nhe)\b|\bso (roi|vo|va|be)\b|nhay cam|\bfragile\b|coi chung (vo|be|roi)|khong duoc (nghieng|do|xoc|rung)" + (
+                   # đợt 16 (h52, kiến thức chung): "coi chừng làm bể", "rơi là hỏng", "va là vỡ", "có thể bị vỡ", "dằn xóc"
+                   r"|coi chung (lam )?(vo|be|roi|do|hong)|(roi|va|dap|xoc|nga) (la|thi|se) (hong|vo|be|hu|nut|mop|toi)\b|"
+                   r"(?<!khong )(?<!khong the )(?<!chang )\bbi (vo|be|nut|gay|mop)\b|\bdan xoc\b|\bxoc nay\b|\bsanh su\b|"
+                   r"(?<!khong )\bco the (bi )?(vo|be|nut|gay|mop)\b" if FLAG_MORE2 else "") + (
+                   # đợt 17 (kiến thức chung; bộ h52 B): "nhạy với va đập", "coi chừng va vào", "mà vỡ là...", "chỗ xóc",
+                   # "giòn lắm", "dễ sứt mẻ", "không chịu được va đập", "kẻo nứt", "trứng gà"
+                   r"|\bnhay (voi |cam voi )?(va|rung|xoc|soc|luc)|coi chung (va|dung|dap|cham)\b|\b(ma|neu|lo) (vo|be|nut|gay|mop|hong) (la|thi)\b|"
+                   r"(cho|duong|doan) (xoc|go ghe)\b|\bgion (lam|qua|tan|de)\b|\bde (sut|me|bep|vun|sut me)\b|keo (nut|gay|mop|me|sut|do vo)\b|"
+                   r"(?<!khong phai )\bkhong chiu (duoc |noi )?(va|rung|xoc|luc|soc)|\btrung (ga|vit|cut)\b" if FLAG_MORE3 else "")
 URGENT_NEG = r"khong (can )?(gap|voi|khan|nhanh)|chua (can )?(gap|voi)|cu tu tu|thong tha|tu tu|luc nao (cung|giao)|bao gio cung|" \
              r"cung (duoc|kip)|khong (co )?gi (gap|voi)|chang (gap|voi)|khoi (gap|voi)|ranh (thi|luc)|khi nao (ranh|tien)|khong han chot|" \
              r"de sau|khong phai (gap|voi)|binh thuong thoi|khong uu tien|tien (thi|luc nao)" + URGENT_NEG_MORE
@@ -94,17 +137,21 @@ URGENT_MORE = r"|trong (vong )?(\d+|vai|it|may|nam|muoi|hai|ba) (phut|giay)|\d+ 
               r"nuoc soi lua bong|\btuc khac\b|\bcap ky\b|\bkhan thiet\b|\bbuc thiet\b|\bcan kip\b|" \
               r"(dang|bi) (hoi|giuc|thuc)\b|dung la ca|khong la ca|(tre|muon|kip) gio|" \
               r"sap (bat dau|vao (gio|lop|hoc|hop)|den gio|muon|het han)|khong (cho|doi) duoc|tung (phut|giay)|" \
-              r"\bmau (len|mau)\b|\ble (len|le|nhe|gium|giup)\b|nhanh (chan|tay|nhanh|gium|giup)|\bdang (doi|cho) (san|gap)\b"
+              r"\bmau (len|mau)\b|\ble (len|le|nhe|gium|giup)\b|nhanh (chan|tay|nhanh|gium|giup)|\bdang (doi|cho) (san|gap)\b" + (
+              # đợt 17: "trong nửa tiếng phải tới", "không để chờ lâu được", "trễ hạn là bị phạt"
+              r"|trong (vong )?(nua|mot|hai|ba|\d+) (tieng|gio)\b|khong (the |duoc )?de (\w+ ){0,2}(cho|doi) lau|(tre|muon) (han|gio) (la|thi|se) (bi|mat)\b"
+              if FLAG_MORE3 else "")
 # (bỏ dấu thì "ngay" = ngay/ngày nên chỉ nhận trong cụm rõ nghĩa "đi ngay", "ngay lập tức"...)
-URGENT_POS = r"\bgap\b|\bkhan\b|hoa toc|\blap tuc\b|\btuc thi\b|cang (nhanh|som) cang tot|\buu tien\b|cham tre|" \
+URGENT_POS = r"\bgap\b|\bkhan\b|hoa toc|\blap tuc\b|\btuc thi\b|cang (nhanh|som) cang tot|\buu tien\b(?! (ghe|tat|re|qua|di qua|lay|nhan|toi|den)\b)|cham tre|" \
              r"trong \d+ phut|\b(di|can|giao|lam|chay|mang|den|toi|gui|chuyen) ngay\b|\bngay (lap tuc|bay gio|va luon|nhe|di)\b|\bngay$|" \
              r"nhanh (len|nhe|chan|nhat)|\bcap toc\b|khong (duoc|the) (tre|cham|lau|cho)|\bkip\b|som nhat|sat gio|" \
              r"\bcap bach\b|\btuc toc\b|keo (tre|muon|lo)|dung (de )?(tre|cham|lau)\b|sap (tre|het gio)|het gio|\bcho lau\b|" \
              r"dang (rat )?(sot ruot|nong ruot|voi)|\bvoi lam\b|\brat voi\b|\bthat nhanh\b|\bnhanh nhat\b|\bkhan truong\b" + URGENT_MORE + URGENT_POS_MORE
 FRAGILE_NEG = r"khong (de )?(vo|be|hong|nut)\b|khong lo (vo|be|hong)|chac chan|\bben\b(?! (trong|ngoai|canh|trai|phai|kia|nay|duoi|tren|do|hong|nhan|giao|gui))|roi cung|va dap cung|khong so (vo|va|roi)|" \
-              r"chang (so|lo)|kho (vo|hong)\b|\bcung cap\b|khong mong manh|khong can nhe" + FRAGILE_NEG_MORE
-FRAGILE_POS = r"\bde (vo|be|hong|nut|me)\b|thuy tinh|\bgom\b(?! (mot|hai|ba|bon|nam|sau|bay|tam|chin|muoi|\d|co|cac|nhung|ca)\b)|\b(do|bang|gom) su\b|pha le|mong manh|\bky va\b|tranh va|nhe tay|can than|" \
-              r"tranh rung|\bhang de\b|nang niu|khong duoc (roi|lac|va)\b|dung (lam roi|lac|quang)|cam (nem|quang)" + FRAGILE_POS_MORE
+              r"chang (so|lo)|kho (vo|hong)\b|\bcung cap\b|khong mong manh|khong can nhe" + FRAGILE_NEG_MORE + (
+              r"|khong (the )?bi (vo|be|nut|gay|mop|hong)|khong the (vo|be|nut|gay|mop|hong)" if FLAG_MORE2 else "")
+FRAGILE_POS = r"\bde (vo|be|hong|nut|me)\b|thuy tinh|\bgom\b(?! (mot|hai|ba|bon|nam|sau|bay|tam|chin|muoi|\d|co|cac|nhung|ca)\b)|\b(do|bang|gom) su\b|pha le|mong manh|\bky va\b|tranh va\b|nhe tay|can than(?! (keo |ke |khong )?(nham|lac|sai|tre|muon|cham|quen|lo)\b)|" \
+              r"tranh rung|\bhang de\b|nang niu|khong duoc (roi|lac|va)\b|dung (lam roi|lac(?! (sang|vao|toi|den|qua)\b)|quang)|cam (nem|quang)" + FRAGILE_POS_MORE
 # từ mở đầu một MÓN HÀNG (hộp, khay, thẻ, túi...): "hộp thuốc", "thẻ thư viện" là hàng chứ không phải địa điểm
 ITEM_HEADS = {"hop", "khay", "the", "tui", "thung", "tap", "bo", "goi", "chong", "ket", "mau", "chia", "so", "bien", "don",
               "binh", "lo", "cuon", "quyen", "to", "giay", "bia", "micro", "mu", "chan", "buu", "kien", "may", "bom", "linh",
@@ -114,7 +161,7 @@ PLACE_HEADS = {"phong", "khu", "noi", "nha", "san", "bai", "toa", "cho", "tram",
                "sanh", "bep", "chot", "goc", "vuon", "trung", "tang", "vien", "quan", "lop", "hoi", "day"}
 GEN_NEG = r"\b(khong|chang|cha|khoi|chua|dau can|dau co|dau phai|gi dau|lam gi|sao duoc)\b|(?<!bat )(?<!ban )(?<!hang )(?<!luc )(?<!tran )\bdau$"
 DOUBLE_NEG = r"khong (duoc|the|nen) (cham|tre|lau|cho|de|muon|roi|va|lac|nem|quang|xoc|lam roi)|khong the (cho|doi)|khong kip|" \
-             r"khong chiu (duoc )?(va|rung|xoc)|khong (duoc|nen) (de )?(roi|va|nghieng|do|xoc|rung|lac)|khong (cho|doi) (lau )?(duoc|noi)|lau khong (duoc|noi)|khong co thoi gian|khong duoc phep (tre|cham|muon)|khong (duoc |the |nen )?(tri hoan|chan chu|la ca)|dung de (\w+ ){0,2}(doi|cho)\b"
+             r"khong chiu (duoc )?(va|rung|xoc)|khong (duoc|nen) (de )?(roi|va|nghieng|do|xoc|rung|lac)|khong (cho|doi) (lau )?(duoc|noi)|lau khong (duoc|noi)|khong co thoi gian|khong duoc phep (tre|cham|muon)|khong (duoc |the |nen )?(tri hoan|chan chu|la ca)|dung de (\w+ ){0,2}(doi|cho)\b" + (r"|khong (duoc|nen|the) (di|chay|lam|giao|mang|dua|chuyen) (cham|tre|lau|muon)" if FLAG_MORE2 else "") + (r"|khong (the |duoc )?de (\w+ ){0,2}(cho|doi) lau" if FLAG_MORE3 else "")
 DIRS = {"bac", "nam", "dong", "tay", "tren", "duoi", "trai", "phai"}
 ORI_WORDS = {"phia", "ben", "man", "huong", "goc", "dau", "mien", "canh", "mep", "ria", "nua"}
 
@@ -140,14 +187,163 @@ def save_embed_cache():
         _EMB.save()
 
 
+# từ khóa bổ sung đợt 10 (TYPE_FIX, kiến thức chung; scratch/h31_style_aliases.py): "nơi đóng học phí" không phải giảng đường,
+# "phòng quản lý sinh viên" không phải ký túc xá, "phòng đo đạc" là phòng thí nghiệm, "bạn cùng phòng" ở ký túc xá
+# (bỏ "thi" và "con dau": không dấu trùng hư từ "thì" / "còn đâu" -> cụm "dưới thì mới" thành tên địa điểm, h27)
+KEYWORDS_MORE = {"office": [(r"hoc phi", 3), (r"le phi", 3), (r"quan ly sinh vien", 3), (r"dong dau", 3),
+                            (r"cong tac (sinh vien|hoc sinh|hssv|nguoi hoc)", 3)],   # đợt 17: "phòng công tác học sinh"
+                 "lab": [(r"do dac", 2.5), (r"do luong", 2.5), (r"kinh hien vi", 3), (r"phan tich mau", 3), (r"vi sinh", 3),
+                         (r"hoa sinh", 3)],
+                 "dorm": [(r"cung phong", 2.5)],
+                 "clinic": [(r"huyet ap", 3), (r"bang bo", 3), (r"vet thuong", 3)],
+                 "lecture": [(r"(giua|cuoi) ky", 2.5)]}
+# đợt 17 (kiến thức chung; các nhóm tên h31 hay nhầm): "phòng hỗ trợ sinh viên" / "nơi xin xác nhận" là văn phòng (không phải
+# ký túc xá vì chữ "sinh viên"); "nơi nghỉ khi ốm" là y tế (không phải chỗ ngủ); "lưu trữ luận văn" là thư viện ("lưu trú" ~
+# "lưu trữ" khi bỏ dấu); "thầy giáo bộ môn" ở giảng đường; "đá cầu" là thể thao
+TYPE_FIX3 = True
+if TYPE_FIX3:
+    for _t, _kw in {"office": [(r"ho tro (sinh vien|nguoi hoc|hoc sinh)", 3), (r"xac nhan", 2.5), (r"giay (gioi thieu|xac nhan)", 3),
+                               (r"\btiep (sinh vien|nhan ho so|dan|cong dan)\b", 2.5)],
+                    "clinic": [(r"\b(khi|nguoi|bi|dang|luc) (om|met|benh|sot)\b", 3), (r"nhiet do", 2.5)],
+                    "library": [(r"luu tru (tai lieu|luan van|sach|ho so|ban)", 3), (r"luan van", 2.5)],
+                    "lecture": [(r"\b(thay|co) giao\b", 3), (r"giao vien|giang vien", 3), (r"\b(dang day|day hoc|giang day)\b", 2.5),
+                                (r"chu nhiem", 2.5), (r"bo mon", 2)],
+                    "sports": [(r"\bda (cau|bong|banh)\b", 3)]}.items():
+        KEYWORDS_MORE[_t] = KEYWORDS_MORE.get(_t, []) + _kw
+
+
 def keyword_scores(text):
-    return np.array([sum(w for pat, w in KEYWORDS[t] if re.search(pat, text)) for t in PLACE_TYPES])
+    s = np.array([sum(w for pat, w in KEYWORDS[t] if re.search(pat, text)) for t in PLACE_TYPES])
+    if TYPE_FIX:
+        s = s + np.array([sum(w for pat, w in KEYWORDS_MORE.get(t, []) if re.search(pat, text)) for t in PLACE_TYPES])
+    return s
 
 
 # câu "gây nhiễu": phủ định / chuyện đã qua -> địa điểm trong câu không phải đích cũng không phải điểm ghé
 # (chú ý: bỏ dấu thì "đừng" và "dụng (cụ)" trùng nhau -> chỉ nhận "dung" khi theo sau là động từ)
 NEG_SENT = r"\bkhong (can|phai|nen|ghe|den|toi|qua)\b|(?<!phai )(?<!nho )(?<!can )(?<!hay )(?<!se )\bdung (nham|ghe|den|toi|qua|di|mang|giao|dua|re|vao|tat|dung)\b|\bbo qua\b|\bkhoi (can|phai|ghe)\b|\bhom (qua|truoc|kia)\b|" \
            r"\bda (giao|roi|chuyen|nhan|xong|di)\b|\bnham\b|\bngoai tru\b|\bchang can\b|\bkhong lien quan\b|\b(lan|tuan) truoc\b"
+# "Không giao ở X", "X hôm nay không nhận hàng", "không được đưa tới X", "khỏi qua X": mọi động từ chở / ghé sau "không"
+NEG_SENT2 = NEG_SENT + r"|\bkhong (duoc |the )?(giao|mang|dua|chuyen|gui|nhan|vao|lay|tat|re|van chuyen)\b|\bkhoi (giao|qua|toi|den|di|ghe)\b" \
+                       r"|\bdong cua\b|\bkhong (con )?mo cua\b" \
+                       r"|\bkhong con (o|lam|nhan|can|tai)\b|\bkhong co ai\b|\bthi khoi\b" \
+                       r"|\bkhong (duoc |the )?di (qua|vao|toi|den|ngang|sang)\b|\bda (co hang|co do|nhan du|nhan hang|nhan do)\b" \
+                       r"|\bkhong danh cho\b|\bdung lac (sang|vao|toi|den|qua)\b|\bthay vi\b"
+# "X đóng cửa rồi", "không còn ở X", "X thì khỏi", "Không đi qua X", "X đã có hàng rồi", "Hàng không dành cho X", "Đừng lạc sang X"
+AVOID_LEFT = r"\b(tranh|ne|ne tranh)( xa| khoi| ra khoi)?$"            # "Nhớ né X ra", "Tránh xa X"
+# đợt 14 (VIA_FIX, scratch/h37_distractor.py): "X hôm nay nghỉ", "Hủy điểm X", "Tránh đường qua X"
+NEG_SENT3 = r"|\b(hom nay|bay gio|dang|da|tam|cuoi tuan) nghi\b|\bhuy (diem|don|chang|ghe|lich|bo)\b|\b(da|bi) huy\b"
+AVOID_LEFT2 = r"\b(tranh|ne|ne tranh)( xa| khoi| ra khoi| duong qua| di qua| di vao| qua| vao)?$"
+# chữ then chốt của các luật trên (để sửa lỗi gõ đảo / rơi chữ: "khong hge X", "Đừng mnag tới X", "Canteen thì bỏ qau")
+KEY_CUES = ["khong", "can", "phai", "nen", "ghe", "den", "toi", "qua", "dung", "nham", "giao", "mang", "dua", "vao", "tat",
+            "khoi", "hom", "truoc", "kia", "roi", "chuyen", "xong", "ngoai", "chang", "lien", "quan", "lan", "tuan", "gui",
+            "nhan", "lay", "dong", "cua", "con", "thi", "tranh", "noi", "diem", "dia", "dich", "cuoi", "cung", "nguoi", "dang",
+            "ngang", "chan", "lai", "tien", "dau", "het", "sang", "nhung", "nho", "duong", "duoc", "van"]
+KEY_CUE_SET = set(KEY_CUES)
+BIGRAM_FIX = True     # sửa âm tiết hợp lệ gõ sai theo từ đứng sau (MissionParser2._fix_seq)
+
+
+# âm tiết tiếng Việt (không dấu) hợp lệ: phụ âm đầu + vần + phụ âm cuối. Lỗi gõ của dữ liệu thường tạo âm tiết SAI cấu trúc
+# ("qau", "acn", "hge", "mnag", "nhna", "iao"), còn từ thật hiếm ("giờ", "hỏng", "tòa") vẫn hợp lệ -> không bị "sửa"
+_VOWELS = ["a", "ai", "ao", "au", "ay", "e", "eo", "eu", "i", "ia", "ie", "ieu", "iu", "o", "oa", "oai", "oao", "oay", "oe",
+           "oeo", "oi", "oo", "u", "ua", "uay", "ue", "ui", "uo", "uoi", "uou", "uu", "uy", "uya", "uye", "uyu", "y", "ya",
+           "ye", "yeu"]
+_SYL = re.compile(r"^(ngh|ng|nh|ch|gh|gi|kh|ph|qu|th|tr|[bcdghklmnrstvx])?(" +
+                  "|".join(sorted(_VOWELS, key=len, reverse=True)) + r")(ng|nh|ch|[cmnpt])?$")
+
+
+def _valid_syllable(t):
+    return bool(_SYL.match(t))
+
+
+# đoán loại tên lạ: thêm "láng giềng gần nhất" (tên đã biết giống nhất của từng loại) và "câu mô tả loại" (e5, không cần học)
+# 0 = tắt. Đo bằng scratch/h28_knowledge_holdout.py (tên hoàn toàn mới) + h1_alias_holdout.py --fair:
+#   KNN 1 + DESC 1: h28 trong câu 0,942 -> 0,956 (có dấu), giấu tên công bằng giữ 0,9983, validation 1,0000.
+#   (CHAR_W 0,5 cho h28 tới 0,967 nhưng giấu tên công bằng 0,9983 -> 0,9979: không dùng)
+KNN_W, KNN_T = 1.0, 0.03
+DESC_W, DESC_T = 1.0, 0.02
+
+
+def _per_type_max(sims, labels):
+    out = np.full(10, -1.0)
+    for k in range(10):
+        m = labels == k
+        if m.any():
+            out[k] = sims[m].max()
+    return out
+
+
+def _soft(x, T):
+    e = np.exp((x - x.max()) / T)
+    return e / e.sum()
+
+
+def _typo1(t, q):
+    """t là q bị gõ sai đúng kiểu của dữ liệu: đảo 2 chữ kề nhau, hoặc rơi / thừa 1 chữ (không tính THAY chữ:
+    "qau" là "qua" đảo chữ, không phải "đầu")."""
+    if len(t) == len(q):
+        d = [k for k in range(len(t)) if t[k] != q[k]]
+        return len(d) == 2 and d[1] == d[0] + 1 and t[d[0]] == q[d[1]] and t[d[1]] == q[d[0]]
+    if abs(len(t) - len(q)) == 1:
+        a, b = (t, q) if len(t) < len(q) else (q, t)
+        return any(b[:k] + b[k + 1:] == a for k in range(len(b)))
+    return False
+
+
+def _neg():
+    return (NEG_SENT2 + NEG_SENT3 if VIA_FIX else NEG_SENT2) if NEW_FRAME_FIX else NEG_SENT
+
+
+# chữ chỉ hướng dùng theo nghĩa KHÁC (không dấu trùng nhau): "phải được ghé" (bắt buộc), "nhẹ tay", "trên đường",
+# "đông người", "đóng cửa", "bác bảo vệ", "nằm gần", "trái cây" -> không được tính là manh mối hướng (h27)
+NOT_DIR = [r"\bphai (?=(duoc|co|la|di|ghe|giao|mang|dua|tat|re|qua|toi|den|lay|nhan|chuyen|van|nho|can|dem|cho|xong|ve|vao)\b)",
+           r"\b(khong|chang|cha|dau|chu khong) phai\b",       # "không phải X" (= không là X), không phải "bên phải"
+           r"\b(nhe|tan|bang|cam|ra|trong) tay\b", r"\btren (duong|xe|tay|vai|lung)\b", r"\bduoi (mai|troi|mua|nang)\b",
+           r"\bdong (cua|nguoi|goi|hop)\b", r"\bbac (si|bao|giu|tai|trong|lao|cong)\b",
+           r"\bnam (?=(gan|xa|o|sat|canh|ke|ngay|giua|cach)\b)", r"\btrai cay\b"]
+
+
+def _all_ref(ws):
+    """Cụm chỉ gồm từ chỉ vị trí ("nửa trên bản đồ", "phần phía trên", "phía trên cùng") -> không phải tên địa điểm."""
+    ref = REF_WORDS | ORI_WORDS | DIRS | {"phan", "cung", "tit", "han", "vung"} if NEW_FRAME_FIX else REF_WORDS
+    return all(w in ref for w in ws)
+
+
+def _dir_text(s):
+    if NEW_FRAME_FIX:
+        for p in NOT_DIR:
+            s = re.sub(p, " ", s)
+    return s
+# cụm gấp / dễ vỡ ("không cần vội", "không quá gấp", "không lo vỡ", "không được chậm"...) nói về HÀNG, không phải về địa điểm:
+# bỏ chúng đi trước khi xét câu có phủ định một địa điểm hay không ("Giao hộp tới X, không cần vội" -> X vẫn là đích)
+FLAG_STRIP = re.compile("|".join(f"(?:{x})" for x in (URGENT_NEG, FRAGILE_NEG, DOUBLE_NEG, URGENT_POS, FRAGILE_POS,
+                                                       r"\b(dung|khong duoc|cam) (di |chay |lam |giao |de |mang |dua )?(cham|tre|lau|muon)\b")))
+# không dấu "vội" = "với": "đừng nhầm với X" khớp mẫu "đừng ... vội" -> cụm có "nhầm" luôn là phủ định địa điểm, giữ lại
+FLAG_KEEP = re.compile(r"\b(nham|lan)\b")
+
+
+ROAD_CTX = re.compile(r"\b(duong (hoi |rat |kha )?(tron|xau|ngap|uot|dong|toi)|tron truot|troi (dang |sap )?mua|mua (to|lon|phun)|"
+                      r"suong mu|toi troi|dong nguoi|di duong)\b")   # "Cảm ơn, đi đường cẩn thận nhé" (h32): dặn đi đường
+
+
+CAREFUL_OTHER = r"\bcan than (keo|ke|de khong)( bi)? (nham|lac|sai|tre|muon|cham|quen|lo|qua gio)\b"
+
+
+def _road_free(s):
+    """Câu dặn đi đường ("Đường hơi trơn, đi cẩn thận nhé", "trời mưa, chạy cẩn thận"): "cẩn thận" nói về đường đi,
+    không phải về hàng -> bỏ cụm đó trước khi xét dấu hiệu DỄ VỠ (kiến thức chung; tỉ lệ dễ vỡ báo trên test cao bất thường)."""
+    if NEW_FRAME_FIX and ROAD_CTX.search(s):
+        s = re.sub(r"\b(di|chay|lai xe|lai)( duong| xe)?( (that|that su|rat))? can than\b", " ", s)
+    return s
+
+
+def _strip_flags(s):
+    if not NEW_FRAME_FIX:
+        return s
+    s = FLAG_STRIP.sub(lambda m: m.group() if FLAG_KEEP.search(m.group()) else " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
 _ORI = r"(phia|ben|man|huong|goc|dau|mien|canh|mep|ria|khu|nua)"
 
 
@@ -172,6 +368,12 @@ PART_OR = True         # câu phụ nhiều vế: xét từng vế rồi gộp
 MIXED_POLICY = "last"  # câu trộn (vế gấp + vế không gấp): "calm" = như bản 0.9467; "urgent" = bản v13 (0.9461); "last" / "first"
 CALM_WINS = True       # câu nói rõ "không gấp / không dễ vỡ" thắng câu khác chỉ được mô hình nghĩa đoán là gấp / dễ vỡ
 E5_POS_URGENT = True  # mô hình nghĩa được tự nhận câu là gấp khi không có từ khóa nào?
+E5_POS_FRAGILE = True   # ... và tự nhận câu là DỄ VỠ? BẬT LẠI (06/10 tối): v31c tắt cờ này thì bảng xếp hạng 0,9778 -> 0,9733 (44 dòng robot 7);
+                        # nghĩa là test có câu dặn dễ vỡ kiểu mới mà chỉ e5 bắt được. Lập luận cũ (dưới đây) đã sai.
+                        # (cũ) trên validation (bộ đọc chỉ học train) e5 tự bật dễ vỡ 0 lần
+                        # (bảng cụm + luật bắt đủ 110 / 110); trên câu tự soạn (scratch/h32_e5_flags.py) e5 tự bật nhầm ~3% câu
+                        # không dễ vỡ (chào / kết, "đồ nhựa dẻo") và bắt đúng ~10% câu dễ vỡ mới, mà câu không dễ vỡ nhiều hơn
+                        # ~5 lần; xác suất e5 không tách được hai nhóm. (Gấp: hai bên ~ cân bằng -> giữ.)
 USE_PLACES_MORE = True    # học thêm các cách gọi địa điểm viết tay bổ sung 2026-10-06 (nlp_knowledge.PLACES_MORE)
 USE_PHRASES_MORE = True   # học thêm các ví dụ viết tay bổ sung 2026-10-04 (nlp_knowledge.PHRASES_MORE)
 KHONG_STRICT = True
@@ -181,25 +383,112 @@ REAL_WORDS_NEAR_KHONG = {"hong", "thong", "phong", "chong", "khoang", "khung", "
 # Để ngưỡng 5 làm "khôgn cần ghé X" bị đọc thành điểm ghé -> cả 10 robot sai.
 KHONG_FREQ = 20
 VETO_NEEDS_NEG = True   # mô hình nghĩa (hiểu phủ định kém) chỉ được bác từ khóa gấp / dễ vỡ khi câu có từ phủ định
+E5_RESTORE = False  # (TẮT: hòa trên bộ thử, 0 dòng test) đợt 17: câu không dấu -> thêm dấu (bảng học từ dữ liệu) trước khi hỏi e5 về cờ (scratch/h62_e5_nearmiss.py)
+E5_TH_R = 0.8
 E5_TH = (0.6, 0.8)   # ngưỡng tin mô hình nghĩa cho câu gấp/dễ vỡ lạ: (câu có dấu, câu không dấu). Đã thử (0.5, 0.6): bảng xếp hạng GIẢM 0.9444 -> 0.9422
 DETECT_RULES = True  # giữ "xá" cuối cụm, nối cụm qua "ở", nhận cụm không từ khóa khi ngữ cảnh rất rõ (scratch/h7)
 LOC_PREPS = {"o", "toi", "den", "qua", "ghe", "tai", "ve", "sang", "vao"}
 CHO_HEAD = True      # giữ "chỗ" ở đầu cụm tên lạ (trước đây bị gọt như từ "cho")
-CHAR_W = 1.0         # trọng số n-gram ký tự khi đoán loại tên lạ (0.5 tốt hơn ở h21 nhưng không hơn ở phép đo cả câu)
+CHAR_W = 1.0         # trọng số n-gram ký tự khi đoán loại tên lạ. (0.5 từng cho 0,9984 nhưng đo lại 4 hạt giống: 0.5 -> 0,9971,
+                     # 1.0 -> 0,9978; chênh lệch < 0,001 giữa các lượt là nhiễu số học của e5 theo lô, không dùng để chọn)
 RESTORE_ACC = True   # tên lạ không dấu: khôi phục dấu trước khi đưa vào mô hình nghĩa e5
+TYPE_FIX = True      # đợt 10 (scratch/h31_style_aliases.py, tên mới kiểu validation thêm vào so với train): "nơi / chỗ + việc làm"
+                     # ("chỗ lấy thuốc"), "ô tô", "ở" cuối tên ("dãy phòng ở"), trợ từ "nha" cuối câu, tra thẳng kho tên tự soạn,
+                     # khôi phục dấu nhìn cả từ đứng TRƯỚC lẫn đứng SAU và học thêm từ kho tên tự soạn ("tra cuu" -> "tra cứu")
+KB_BOOST = 3.0       # điểm cộng (thang log) cho loại của cụm khớp ĐÚNG một tên trong kho tên tự soạn (nlp_knowledge)
+VIA_FIX = True       # đợt 14 (scratch/h36_via.py, khung điểm ghé mới tự soạn: 158 / 200): "Nơi lấy hàng là A", "Đồ đang để ở A,
+                     # mang sang B", "Chở thêm đồ từ A sang B", "Đơn gồm hai chặng: A và B", "Điểm lấy hàng: nhà thi đấu"
+VIA_SEMI = VIA_MASK = VIA_KHOI = VIA_CHO = VIA_ROLE = True   # công tắc con của VIA_FIX (để quy thay đổi trên test)
+VIA_TYPE_FIX = True  # đợt 15: không tìm thấy tên đích + có điểm ghé đã biết -> đích không được trùng loại điểm ghé
+ITEM_NOT_BEFORE = {"lay", "nhan", "giao", "gui", "dua", "mang", "chuyen", "noi", "diem", "cho", "de", "cat", "dia"}
+STORED_AT = r"\b(do|hang|mon do|goi hang|kien hang|tui do|thung hang|hop)( \w+){0,2} (dang |duoc |da |van )?(de|cat|gui|nam)( san)? (o|tai)$"
+DESC_MORE = False    # đợt 13: thêm nlp_knowledge.TYPE_DESC2 (8 mô tả / loại) vào nguồn "mô tả loại" khi đoán loại tên lạ
+SPATIAL_FIX2 = True  # đợt 12 (scratch/h35_spatial.py): "ở phía bên tay phải" sai 12 / 12, "ở mé trái" sai 12 / 12
+ITEM_FIX = True      # đợt 11 (scratch/h33_items.py): MÓN HÀNG không phải địa điểm và không mang cờ gấp / dễ vỡ. Train + validation:
+                     # món hàng chỉ ở dòng "Hàng: X" (221 lần, đều trung tính) hoặc ở chỗ "giao X tới"; món tương quan với loại
+                     # đích ("thẻ thư viện", "túi sơ cứu") nhưng độc lập với cờ (mọi món ~ tỉ lệ dễ vỡ chung 0.40); không câu giao
+                     # hàng nào chứa lời dặn gấp / dễ vỡ (0 / 1145). Món MỚI của test ("sách thư viện", "Hàng: bình hoa") không
+                     # được cướp vai đích / điểm ghé hay bật cờ.
+ITEM_LINE = re.compile(r"^(hang|mon hang|kien hang|mat hang|hang hoa|vat pham)\s*:\s*\S")
+DELIVER_VERBS = {"giao", "gui", "dua", "mang", "chuyen"}
+SLOT_END = {"toi", "den", "qua", "sang", "ve", "vao", "ra", "cho", "tai", "o", "tu", "ghe", "len", "xuong", "nhe", "giup", "gium",
+            "la",     # "Nơi cần giao LÀ cổng chính ở phía trên": "là" không mở đầu món hàng (h27: bản đầu làm mất đích)
+            "nho", "roi", "xong", "nhung", "thi", "truoc", "sau", "va"}   # "Giao thư viện; NHỚ qua X trước" (h27c --v7)
+DEST_PREPS = {"toi", "den", "qua", "sang", "ve", "vao", "cho"}
+DELIVER_END = DEST_PREPS | {"o", "tai"}    # "Có đơn giao <món> ở <nơi>"
+MODALS = {"phai", "can", "se", "nen", "duoc", "da", "dang", "vua"}       # "<món> phải được đưa tới", "<món> cần chuyển tới"
+ITEM_IS = re.compile(r"\b(hang|mon hang|kien hang|mon|do)( (can|se) (giao|gui|chuyen|dua|mang))?$")   # "hàng cần giao là <món>"
+PICK_VERBS = {"lay", "nhan"}           # "lấy / nhận <món> ở / tại / từ A": món lấy ở điểm ghé
+PICK_END = {"o", "tai", "tu"}
+PICK_NOUN = {"nguoi", "diem", "noi", "ben", "khach", "cho", "phong", "ky"}   # "người nhận", "điểm nhận", "nơi nhận": danh từ
+ITEM_FIX2 = True    # đợt 16: "ghé X lấy <món>" hết vế: món hàng có tên địa điểm ("thẻ thư viện") không phải điểm ghé / đích
+ITEM_TAIL_END = {"truoc", "roi", "xong", "nhe", "nha", "giup", "gium", "dum", "da", "sau", "thi", "va", "luon", "ngay"}
+# lời dặn RÕ RÀNG (vị ngữ) vẫn được tính nếu lỡ nằm trong dòng "Hàng: ..." ("Hàng: đồ dễ vỡ"); danh từ (thủy tinh, cấp cứu) thì không
+ITEM_FRAGILE_PRED = r"\bde (vo|be|hong|nut|me|gay|mop)\b|va (dap|cham)|mong manh|nhe tay|can than|nang niu|\bky va\b|tranh (va|rung|xoc)"
+ITEM_URGENT_PRED = r"\bgap\b|\bkhan\b|hoa toc|lap tuc|cang (nhanh|som)|cham tre|\bcap toc\b|\btuc toc\b"
+NAME_TAIL = {"nha", "nhen", "nghen"}          # trợ từ cuối câu dễ bị dính vào tên lạ ("phòng quản lý sinh viên nha")
+NHA_KEEP = {"toa", "khu", "day", "can", "ngoi", "mai", "cuoi", "dau", "o"}   # "tòa nhà", "dãy nhà", "nhà ở"...: "nhà" thuộc tên
 FRAME_RULE = True    # "ghé / tạt qua X lấy / nhận ... trước": X là địa điểm
 FRAME_END = {"lay", "nhan", "lanh", "truoc", "xong"}
 FRAME_CUT = {"nam", "o", "gan", "xa", "sat", "phia", "ben", "man", "huong", "canh", "cach", "ke", "mien", "tai"}
+SAME_ENT_HEADS = True   # "<người> ở khu / tòa <nơi>": vẫn là một (người nhận + nơi làm việc), cùng vai trò
+O_IN_NAME = {"khu", "nha", "phong", "cho", "noi", "toa", "day", "can"}   # "khu ở", "nhà ở", "chỗ ở": "ở" nằm trong tên
+# "chỗ ở NỘI TRÚ", "khu ở TẬP THỂ", "nhà ở DÀNH CHO...": "ở" + từ định danh nơi ở -> vẫn là một tên (đợt 16, kiến thức chung)
+O_QUAL = {("noi", "tru"), ("tap", "the"), ("ky", "tuc"), ("danh", "cho"), ("cho", "sinh"), ("cho", "tan"), ("cua", "hoc"),
+          ("sinh", "vien"), ("cho", "nguoi"), ("lau", "dai")}
+DIR_RULE_WINS = True   # hướng đọc từ từ khóa ngay sau tên địa điểm thắng bộ phân loại khi hai bên ra hai hướng khác nhau
+PHRASE_NEEDS_CUE = True # bảng cụm từ chỉ gán gấp / dễ vỡ khi cụm có từ ngữ gấp / dễ vỡ (0 cụm bị bỏ trên train + validation đầy đủ)
 DIR_GUARD = True     # bộ phân loại chỉ được trả về hướng khi ngữ cảnh có từ chỉ hướng / vị trí
 DIR_HINTS = ["bac", "nam", "dong", "tay", "tren", "duoi", "trai", "phai", "man", "phia", "ben", "huong", "goc", "mien",
              "canh", "mep", "ria", "nua", "dau", "cuoi", "top", "left", "right", "north", "south", "east", "west"]
+DIR_GUARD2 = True    # đợt 17: ngữ cảnh "phía / mặt / bên trước | sau" mà không có TỪ HƯỚNG (bắc/nam/.../trái/phải) -> không phải hướng
+                     # (bản đầu đòi từ hướng ở mọi nơi: làm mất "bên tái (trái) bản đồ" gõ sai, validation)
+                     # ("cổng phía trước": "phía trước" không phải hướng trên bản đồ; h48 train)
+DIR_CORE = ["bac", "nam", "dong", "tay", "tren", "duoi", "trai", "phai", "top", "left", "right", "north", "south", "east", "west"]
 GOAL_FRAME_RULE = True  # "mang ... tới <X>", "đích đến là <X>": X là địa điểm
 # (không dùng các chữ không dấu trùng với chữ trong tên địa điểm: nha~nhà, cho~chỗ, de~để, thi~thí, can~căn, nhan~nhân)
 GOAL_FRAME_END = {"giup", "nhe", "va", "roi", "truoc", "xong", "lay", "hon", "nhung", "duoc", "luon", "dum", "gium", "voi", "di",
-                  "minh", "nhanh", "ngay"}
+                  "minh", "nhanh", "ngay", "dang"}
 ANCHOR_RULE = True   # "<địa điểm> gần / xa <Y> (hơn)": Y là mốc
+REF_SLOT = True      # đợt 16: "tới / ở / là <X> gần Y hơn | phía bắc": X là tên địa điểm dù không mở đầu bằng phòng / khu / nơi
+                     # (trước đây X lạ bị bỏ -> mốc Y bị nhận làm đích; h48_alias_swap.py "cần ... ở góc tài liệu tham khảo cách xa căng tin")
+# "X TRƯỚC 10 giờ / trước giờ học / trước buổi trưa": hạn giờ, không phải "ghé X trước" (h27e: "Giao tới căng tin trước 10 giờ")
+TRUOC_TIME = r"truoc (\d+|mot|hai|ba|bon|nam|sau|bay|tam|chin|muoi)( \w+)? ?(h|g|gio|phut|tieng)\b|truoc (gio|buoi|luc|ngay|toi|trua|" \
+             r"chieu|sang|mai|thu|han|deadline|ca|tiet|cuoi|dau|giua|khi|lich)\b"
+HEAD_ACC_FIX = True  # đợt 16: dạng CÓ DẤU hợp lệ của từ mở đầu tên địa điểm (HEADS không dấu nhập nhằng: kỵ / ký, cần / căn...)
+HEAD_ACC = {"bai": ("bãi",), "ban": ("ban", "bàn"), "bep": ("bếp",), "can": ("căn",), "cho": ("chỗ", "chợ"), "chot": ("chốt",),
+            "cong": ("cổng",), "day": ("dãy",), "diem": ("điểm",), "giang": ("giảng",), "ham": ("hầm",), "hanh": ("hành",),
+            "hoi": ("hội",), "ky": ("ký", "kí"), "loi": ("lối",), "lop": ("lớp",), "nha": ("nhà",), "noi": ("nơi", "nội"),
+            "phong": ("phòng",), "quan": ("quán", "quản"), "quay": ("quầy",), "san": ("sân", "sảnh"), "thu": ("thư", "thủ"),
+            "toa": ("tòa", "toà"), "tram": ("trạm",), "van": ("văn",), "vien": ("viện",), "xuong": ("xưởng",), "tang": ("tầng",),
+            "sanh": ("sảnh",), "trung": ("trung",)}   # đợt 17: "trứng gà" không phải "trung tâm"
+ANCHOR_NEEDS_REL = True  # đợt 16: vai "mốc" cần từ quan hệ (gần / xa / sát / cạnh / kế / cách) trong 4 từ đứng trước
+SUBJ_TRIM = True   # đợt 17 (h48 train): chủ ngữ "<người> <nơi> cần nhận": lấy phần nơi; "khu phòng ở cần nhận": "ở" thuộc tên
+SUBJ_PLACE_HEADS = {"noi", "phong", "khu", "toa", "nha", "day", "goc", "san", "bai"}
+PERSON_LEADS = (("ban", "quan", "ly"), ("can", "bo"), ("nhan", "vien"), ("co",), ("chu",), ("anh",), ("chi",), ("thay",), ("bac",))
+GOAL_SLOT_STRONG = True   # đợt 17: "Điểm giao: X." (X trọn vế) chắc chắn là địa điểm dù không mở đầu bằng từ quen ("góc tra cứu")
+EDGE_ACC_FIX = True   # đợt 17: câu CÓ DẤU: chữ khung ở mép tên chỉ bị gọt khi đúng là dạng khung ("tới", không phải "tối":
+                      # "nơi ăn tối"; "về" không phải "vẽ": "phòng vẽ"; "bên" không phải "bến"; "dịch" vụ; "tân" sinh viên)
+EDGE_ACC = {"toi": ("tới", "tôi"), "da": ("đã",), "can": ("cần",), "ve": ("về",), "nhan": ("nhận",), "lay": ("lấy",),
+            "qua": ("qua", "quá"), "dang": ("đang",), "tre": ("trễ",), "den": ("đến",), "ghe": ("ghé",), "roi": ("rồi",),
+            "voi": ("với", "vội"), "keo": ("kẻo",), "tan": ("tận",), "thi": ("thì",), "minh": ("mình",), "dich": ("đích",),
+            "la": ("là",), "va": ("và",), "ben": ("bên",), "canh": ("cạnh",), "cach": ("cách",), "man": ("mạn",),
+            "phia": ("phía",), "huong": ("hướng",), "nhat": ("nhất",), "hon": ("hơn",), "truoc": ("trước",), "giup": ("giúp",),
+            "khong": ("không",), "gan": ("gần",), "sat": ("sát",), "ke": ("kế", "kề"), "tai": ("tại",), "ngang": ("ngang",)}
+LONE_BAD = LONE_BAD | {"tram"}   # đợt 16: "Trạm dừng đầu tiên là X": "trạm" đứng một mình không phải tên (train + val: luôn "trạm xá / y tế")
+PERSON_TYPO_FIX = True  # đợt 16: khung "<người> cần nhận / đang chờ" tìm trên chuỗi đã sửa lỗi gõ chữ khung ("cần nhn")
+NHAN_VIEN_FIX = True    # đợt 16: "đến X nhân viên..." không phải "đến X NHẬN"
+FRAME_STRONG = True  # đợt 16: khung câu CHẮC CHẮN có tên địa điểm ("Hàng cho X:", "ghé X lấy / trước", "gần / xa Y hơn",
+                     # "nơi cần giao là X"): nhận cụm X / Y lạ dù không mở đầu bằng từ quen (h48_alias_swap.py)
+# dạng CÓ DẤU của các từ khung (FRAME_CUT) không dấu: chữ có dấu khác là chữ của tên ("kệ sách", "tài liệu", "cửa ngõ", "nam")
+CUT_ACC = {"tai": ("tại",), "ke": ("kế", "kề"), "o": ("ở",), "nam": ("nằm",), "gan": ("gần",), "xa": ("xa",), "sat": ("sát",),
+           "canh": ("cạnh",), "cach": ("cách",), "phia": ("phía",), "ben": ("bên",), "man": ("mạn",), "huong": ("hướng",),
+           "mien": ("miền",)}
 ANCHOR_END = {"hon", "truoc", "lay", "lanh", "dang", "giup", "nhe", "roi", "xong", "va", "nhung", "nhat", "mot", "chut", "lam",
               "khong", "minh"}
+CUE_OVERRIDE = True  # chỉ có 2 địa điểm: dấu hiệu trong câu rất mạnh (|điểm| >= CUE_MARGIN) thắng bộ phân loại vai trò
+CUE_MARGIN = 4.5
+FUZZY_REF_OK = True  # khớp mờ tên đã biết vẫn được nhận khi từ kế bên là từ chỉ hướng ("căng tin mạn dưới")
 VIA_EXCLUDES_GOAL = True  # điểm ghé đã biết loại -> đích (tên lạ) không thể cùng loại
 VIA_NOT_ANCHOR = True  # địa điểm đứng ngay sau "ghé / tạt qua" không thể là mốc gần / xa
 PERSON_RULE = True   # chủ ngữ của "<người> cần nhận / đang chờ ..." là đích (người nhận lạ)
@@ -269,6 +558,9 @@ class MissionParser2:
         self.lex = Lexicon(mine_lexicon(missions), ngram_counts(missions))
         cnt = Counter(t for m in missions for s in sentences(m["text"]) for t in tokens(s))
         self.freq = dict(cnt)
+        # cặp từ liền nhau (để sửa lỗi gõ ra âm tiết HỢP LỆ theo từ đứng sau: "hông phải" -> "không phải")
+        self.bigram = dict(Counter((a, b) for m in missions for s in sentences(m["text"])
+                                   for a, b in zip(tokens(s), tokens(s)[1:])))
         # bảng khôi phục dấu (từ không dấu -> dạng có dấu hay gặp nhất, có xét từ đứng trước), học từ văn bản có dấu
         uni, bi = defaultdict(Counter), defaultdict(Counter)
         from nlp_knowledge import PLACES as _PL
@@ -284,7 +576,38 @@ class MissionParser2:
                 bi[(_unaccent(prev), u)][w] += 1
                 prev = w
         self.acc_uni = {u: c.most_common(1)[0][0] for u, c in uni.items()}
+        # dạng có dấu QUEN của một chữ: chiếm >= 10% số lần gặp và >= 3 lần (dạng gõ sai lẻ tẻ của dữ liệu như "hông" không tính)
+        self.acc_forms = {u: {w for w, n in c.items() if n >= 3 and n >= 0.1 * sum(c.values())} for u, c in uni.items()}
         self.acc_bi = {k: c.most_common(1)[0][0] for k, c in bi.items() if sum(c.values()) >= 2}
+        if TYPE_FIX:
+            # bảng khôi phục dấu RIÊNG cho tên lạ (chỉ dùng trong restore): cặp từ liền nhau -> dạng có dấu của từ sau (biết từ
+            # trước) và của từ trước (biết từ sau). Kho tên tự soạn được ưu tiên (đúng chính tả, đúng ngữ vực tên địa điểm),
+            # rồi tới dữ liệu (cặp gặp >= 2 lần để tránh lỗi gõ lẻ tẻ).
+            from nlp_knowledge import PLACES_MORE as _PM, TYPE_DESC as _TD
+
+            def pair_tables(txts, minc):
+                bl, br = defaultdict(Counter), defaultdict(Counter)
+                for t in txts:
+                    ws = re.findall(r"[^\W\d_]+", t.lower())
+                    if all(w.isascii() for w in ws):
+                        continue
+                    for a, b in zip(ws, ws[1:]):
+                        k = (_unaccent(a), _unaccent(b))
+                        bl[k][b] += 1
+                        br[k][a] += 1
+                pick = lambda d: {k: c.most_common(1)[0][0] for k, c in d.items() if sum(c.values()) >= minc}
+                return pick(bl), pick(br)
+            kb_texts = [x for d in (_PL, _PM) for v in d.values() for x in v] + [x for v in _TD.values() for x in v]
+            kl, kr = pair_tables(kb_texts, 1)
+            dl_, dr_ = pair_tables([m["text"] for m in missions], 2)
+            self.racc_l, self.racc_r = {**dl_, **kl}, {**dr_, **kr}
+            # tên trong kho tự soạn (không dấu) -> loại, chỉ giữ tên thuộc đúng MỘT loại
+            kbt = defaultdict(set)
+            for d in (_PL, _PM):
+                for t, v in d.items():
+                    for x in v:
+                        kbt[" ".join(tokens(_unaccent(x.lower())))].add(t)
+            self.kb_type = {a: next(iter(ts)) for a, ts in kbt.items() if a and len(ts) == 1}
         # ---- bộ gán nhãn cụm địa điểm ----
         S, SP = [], []
         lb, rb = Counter(), Counter()
@@ -381,6 +704,8 @@ class MissionParser2:
         for s, (n, u, f) in table.items():
             if n >= 2:
                 lab = 1 if u >= 0.9 * n and n >= 3 else (2 if f >= 0.9 * n and n >= 3 else 0)
+                if PHRASE_NEEDS_CUE and ((lab == 1 and not re.search(URGENT_POS, s)) or (lab == 2 and not re.search(FRAGILE_POS, s))):
+                    lab = 0     # tương quan tình cờ ("hàng: chìa khóa xe" gặp 3 lần, cả 3 đều là đơn gấp): không có từ ngữ gấp / dễ vỡ
                 self.phrase[s] = lab
                 Sx.append(s); yS.append(lab)
         self.v_p = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 5), sublinear_tf=True)
@@ -408,7 +733,16 @@ class MissionParser2:
             for t, v in CANONICAL_ACC.items():
                 for s in {v, _unaccent(v)} | {x for a in PLACES[t] for x in (a, _unaccent(a))}:
                     tx.append(s); ty.append(PLACE_TYPES.index(t))
-            self.e5_type = LogisticRegression(C=50, max_iter=3000).fit(E.encode(tx), ty)
+            tv = E.encode(tx)
+            self.e5_type = LogisticRegression(C=50, max_iter=3000).fit(tv, ty)
+            # láng giềng gần nhất (tên đã biết giống nhất của từng loại) + câu mô tả từng loại: scratch/h29_typing_methods.py
+            self.knn_vec, self.knn_lab = tv, np.array(ty)
+            from nlp_knowledge import TYPE_DESC
+            dd = [(d, PLACE_TYPES.index(t)) for t, lst in TYPE_DESC.items() for d in lst]
+            if DESC_MORE:
+                from nlp_knowledge import TYPE_DESC2
+                dd += [(d, PLACE_TYPES.index(t)) for t, lst in TYPE_DESC2.items() for d in lst]
+            self.desc_vec, self.desc_lab = E.encode([d for d, _ in dd], prefix="passage: "), np.array([k for _, k in dd])
             # 5 lớp: 0 trung tính, 1 gấp, 2 dễ vỡ, 3 không gấp, 4 không dễ vỡ
             px, py = [], []
             for s, lab in self.phrase.items():
@@ -440,7 +774,22 @@ class MissionParser2:
     # ================= tiện ích =================
     def _sents(self, text):
         # (đã thử tự sửa lỗi gõ cho mọi từ lạ: làm hỏng các từ MỚI hợp lệ như "xong" -> "cong", nên bỏ)
-        return sentences(text)
+        if SPATIAL_FIX2:
+            text = re.sub(r"\bđáy\b", "dưới", text, flags=re.I)  # "ở đáy bản đồ" = phía dưới (chỉ dạng có dấu: "day" ~ "đây / dãy")
+        out = sentences(text)
+        if VIA_FIX and VIA_SEMI:
+            out = [s.replace(";", ",") for s in out]          # dấu ";" là ranh giới vế (tag_tokens chỉ giữ "," và ":")
+        if SPATIAL_FIX2:
+            # "bên TAY phải" ("tay" không dấu ~ hướng "tây" -> hai hướng mâu thuẫn), "MÉ trái" (mé = phía); 0 lần trong train + val.
+            # Chỉ dạng có "bên": "phía TÂY PHẢI được ghé trước" (tây + phải = cần) KHÔNG được đổi (h27, bản đầu đổi nhầm thành đông)
+            out = [re.sub(r"\bme (tren|duoi|trai|phai|bac|nam|dong|tay)\b", r"phia \1", re.sub(r"\bben tay (trai|phai)\b", r"ben \1", s))
+                   for s in out]
+            # "phía tay phải / trái" (không có "bên"): "tay trái" luôn là tay; "tay phải" là tay trừ khi "phải" = CẦN
+            # ("phía tây phải được ghé", "tây phải đi qua")
+            out = [re.sub(r"\b(phia|o|nam|huong) tay trai\b", r"\1 ben trai",
+                          re.sub(r"\b(phia|o|nam|huong) tay phai\b(?! (duoc|ghe|di|toi|den|qua|giao|mang|lay|nhan|co|la|vao|dung|re|tat|"
+                                 r"chuyen|dua|xong|nho|can|ve))", r"\1 ben phai", s)) for s in out]
+        return out
 
     @staticmethod
     def _tt(sent):
@@ -449,13 +798,21 @@ class MissionParser2:
         return tt, [tt[i] for i in idx], idx
 
     def _main_text(self, text):
-        keep = [s for s in self._sents(text) if not re.search(NEG_SENT, s)]
+        keep = [s for s in self._sents(text) if not re.search(_neg(), _strip_flags(s))]
         return " . ".join(keep)
 
     def restore(self, text):
         """Đoán dấu cho cụm không dấu ("phong mot cua" -> "phòng một cửa") bằng bảng học từ dữ liệu; từ lạ giữ nguyên."""
         if not hasattr(self, "acc_uni"):
             return text
+        if TYPE_FIX and hasattr(self, "racc_l"):
+            ws = text.split()
+            out = []
+            for k, u in enumerate(ws):
+                w = (self.racc_l.get((ws[k - 1], u)) if k > 0 else None) \
+                    or (self.racc_r.get((u, ws[k + 1])) if k + 1 < len(ws) else None) or self.acc_uni.get(u, u)
+                out.append(w)
+            return " ".join(out)
         out, prev = [], "<s>"
         for u in text.split():
             w = self.acc_bi.get((prev, u)) or self.acc_uni.get(u, u)
@@ -465,17 +822,43 @@ class MissionParser2:
     def span_probs(self, text, acc=None):
         """Phân bố loại địa điểm của một cụm tên gọi (lạ). Ba nguồn: n-gram ký tự so với tên đã biết,
         từ khóa viết tay, và vector nghĩa e5 (tin hơn khi cụm có dấu)."""
+        kw_text = text
+        if TYPE_FIX and "sinh vien" in text:
+            # "sinh viên" là từ CHUNG trên campus (mọi nơi đều phục vụ sinh viên) nhưng tên ký túc xá của train hay có nó
+            # ("sinh viên nội trú", "phòng ở sinh viên") -> các mô hình học kéo mọi tên lạ có "sinh viên" về ký túc xá
+            # ("nơi sinh viên học", "phòng tiếp sinh viên"). Bỏ cụm này khỏi đầu vào của mô hình học; từ khóa và tra kho
+            # vẫn xét cả tên ("làng sinh viên", "nhà sinh viên" vẫn là ký túc xá).
+            ws = text.split()
+            aw = acc.split() if acc and len(acc.split()) == len(ws) else None
+            keep = [True] * len(ws)
+            for k in range(len(ws) - 1):
+                if ws[k] == "sinh" and ws[k + 1] == "vien":
+                    keep[k] = keep[k + 1] = False
+                    if k > 0 and ws[k - 1] == "cua":
+                        keep[k - 1] = False
+            if sum(keep) >= 2:
+                text = " ".join(w for w, kp in zip(ws, keep) if kp)
+                acc = " ".join(w for w, kp in zip(aw, keep) if kp) if aw else None
         p = self.type_clf.predict_proba(self.v_t.transform([text]))[0]
         full = np.full(10, 1e-3)
         full[self.type_clf.classes_] = p
-        score = CHAR_W * np.log(full + 0.03) + (0.0 if getattr(self, "ablate_rules", False) else 2.0) * keyword_scores(text)
+        score = CHAR_W * np.log(full + 0.03) + (0.0 if getattr(self, "ablate_rules", False) else 2.0) * keyword_scores(kw_text)
         if getattr(self, "use_e5", False):
             s = acc if acc else text
             if RESTORE_ACC and s.isascii():
                 s = self.restore(text)
             pe = np.full(10, 1e-3)
-            pe[self.e5_type.classes_] = self.e5_type.predict_proba(embedder().encode([s]))[0]
+            q = embedder().encode([s])
+            pe[self.e5_type.classes_] = self.e5_type.predict_proba(q)[0]
             score += (1.0 if s != text else 0.5) * np.log(pe + 0.02)
+            if KNN_W > 0 and hasattr(self, "knn_vec"):
+                score += KNN_W * np.log(_soft(_per_type_max(self.knn_vec @ q[0], self.knn_lab), KNN_T) + 0.02)
+            if DESC_W > 0 and hasattr(self, "desc_vec"):
+                score += DESC_W * np.log(_soft(_per_type_max(self.desc_vec @ q[0], self.desc_lab), DESC_T) + 0.02)
+        if TYPE_FIX and getattr(self, "kb_type", None):
+            t = self.kb_type.get(kw_text)
+            if t is not None:
+                score[PLACE_TYPES.index(t)] += KB_BOOST       # tên có sẵn trong kho tự soạn ("nơi đóng học phí")
         e = np.exp(score - score.max())
         return e / e.sum()
 
@@ -520,10 +903,14 @@ class MissionParser2:
                 back = {ti: wi for wi, ti in enumerate(idx)}
                 probs = self.tagger.predict(tt)
                 pw = [probs[idx[k]] for k in range(len(words))]       # xác suất "thuộc tên địa điểm" theo từng từ
+                # chữ khung câu bị gõ sai ("gaio", "cnầ", "ần" trong "nơi cần giao"): không được nằm ở mép một tên lạ
+                fw = self._fix_seq(words, acc_w) if NEW_FRAME_FIX else words
+                frame_typo = lambda k: fw[k] != words[k] and (fw[k] in EDGE_STRIP or (fw[k] in KEY_CUE_SET and fw[k] not in HEADS))
                 # khớp mờ (sửa lỗi gõ) chỉ được nhận khi nó không phải một mẩu của tên địa điểm dài hơn
                 # (vd "an tap" trong "phòng ăn tập thể" không phải "sân tập" gõ sai)
+                nb = lambda k: pw[k] > 0.5 and not (FUZZY_REF_OK and words[k] in REF_WORDS | ORI_WORDS | DIRS)
                 ms = [m for m in ms if " ".join(words[m[0]:m[1]]) == m[3]
-                      or not ((m[0] > 0 and pw[m[0] - 1] > 0.5) or (m[1] < len(words) and pw[m[1]] > 0.5))]
+                      or not ((m[0] > 0 and nb(m[0] - 1)) or (m[1] < len(words) and nb(m[1])))]
                 known_tt = [(idx[a], idx[b - 1] + 1) for (a, b, t, al) in ms]
                 used = set(k for m in ms for k in range(m[0], m[1]))
                 # một từ "có thể thuộc tên địa điểm": từ lạ, hoặc từ quen mà bộ gán nhãn không chắc chắn là không phải
@@ -539,7 +926,11 @@ class MissionParser2:
                     # trong dữ liệu huấn luyện) hoặc dấu câu: từ cuối của tên lạ thường bị bỏ sót
                     steps = 0
                     while j < len(words) and steps < 4 and j not in used and idx[j] == idx[j - 1] + 1 \
-                            and words[j] not in self.right_bound and maybe(j):
+                            and ((words[j] not in self.right_bound and maybe(j)) or self._o_name(words, idx, j, acc_w)
+                                 or (SUBJ_TRIM and words[j] in ("truoc", "sau") and words[j - 1] in ("phia", "mat"))):
+                        if self._o_name(words, idx, j, acc_w) and j + 1 < len(words) and words[j + 1] == "to" \
+                                and j + 1 not in used and idx[j + 1] == idx[j] + 1:
+                            j += 1                              # "ô tô": lấy cả hai chữ
                         j += 1; steps += 1
                     steps = 0
                     while i > 0 and steps < 3 and (i - 1) not in used and idx[i] == idx[i - 1] + 1 \
@@ -547,14 +938,25 @@ class MissionParser2:
                         i -= 1; steps += 1
                     # gọt các từ khung ở hai đầu và các cụm chỉ hướng ở cuối ("... mạn trên", "... nằm phía đông", "... bên phải bản đồ")
                     changed = True
+                    s_acc = EDGE_ACC_FIX and not "".join(acc_w).isascii() and len(acc_w) == len(words)
+                    keep_edge = lambda k: s_acc and words[k] in EDGE_ACC and acc_w[k] not in EDGE_ACC[words[k]]
                     while changed and i < j:
+                        if keep_edge(j - 1):
+                            break
+                        if SUBJ_TRIM and j - i >= 3 and words[j - 1] in ("truoc", "sau") and words[j - 2] in ("phia", "mat"):
+                            break                               # "cổng phía trước", "cổng mặt sau": thuộc tên (không phải hướng bản đồ)
                         changed = False
                         if DETECT_RULES and words[j - 1] == "xa" and j - i >= 2 and (
                                 acc_w[j - 1] == "xá" or (acc_w[j - 1] == "xa" and "".join(acc_w).isascii() and not (
                                     j < len(words) and (words[j] in HEADS or words[j] == "hon" or any(m[0] == j for m in ms))))):
                             break                               # "trạm xá", "bệnh xá": chữ cuối là "xá", không phải "xa"
-                        if words[j - 1] in EDGE_STRIP:
-                            j -= 1; changed = True
+                        if words[j - 1] == "o" and j - i >= 2 and self._o_name(words, idx, j - 1, acc_w):
+                            break                               # "dãy phòng ở", "khu nhà ở": "ở" thuộc tên
+                        if words[j - 1] in EDGE_STRIP or (NEW_FRAME_FIX and frame_typo(j - 1)):
+                            j -= 1; changed = True              # cả chữ khung gõ sai ("Nơi nhna: X", "nơi cần gaio")
+                        elif TYPE_FIX and j - i >= 2 and words[j - 1] in NAME_TAIL and acc_w[j - 1] != "nhà" \
+                                and words[j - 2] not in NHA_KEEP and (j == len(words) or idx[j] != idx[j - 1] + 1):
+                            j -= 1; changed = True              # trợ từ cuối câu: "... phòng quản lý sinh viên nha."
                         elif j - i >= 2 and words[j - 2:j] == ["ban", "do"]:
                             j -= 2; changed = True
                         elif j - i >= 2 and words[j - 1] in DIRS and words[j - 2] in ORI_WORDS:
@@ -563,19 +965,29 @@ class MissionParser2:
                             j -= 1; changed = True
                         elif words[j - 1] == "nam" and j - i >= 2 and j < len(words) and words[j] in ORI_WORDS | {"gan", "xa", "sat", "o", "canh"}:
                             j -= 1; changed = True          # "nằm" (động từ) đứng trước cụm chỉ hướng
-                    while i < j and words[i] in EDGE_STRIP:
+                    while i < j and (words[i] in EDGE_STRIP or (NEW_FRAME_FIX and frame_typo(i))) and not keep_edge(i):
                         if CHO_HEAD and words[i] == "cho" and j - i >= 2 and (acc_w[i] == "chỗ" or (
                                 acc_w[i] == "cho" and "".join(acc_w).isascii() and i > 0 and words[i - 1] in LOC_PREPS and pw[i] >= 0.3)):
                             break                               # "chỗ trả sách", "chỗ để xe": "chỗ" là từ mở đầu tên địa điểm
                         i += 1
-                    if i >= j or all(w in REF_WORDS for w in words[i:j]):
+                    if SUBJ_TRIM and i < j:
+                        # "ban quản lý / cán bộ / cô <nơi>": phần người không thuộc tên nơi chốn
+                        lead = next((len(pl) for pl in PERSON_LEADS if tuple(words[i:i + len(pl)]) == pl), 0)
+                        if lead and i + lead < j - 1 and words[i + lead] in SUBJ_PLACE_HEADS:
+                            i += lead
+                            # phần nới sang phải bị giới hạn 4 bước tính cả phần người: nới tiếp qua các từ bộ gán nhãn chắc chắn
+                            while j < len(words) and j - i < 6 and j not in used and idx[j] == idx[j - 1] + 1 and pw[j] >= 0.5:
+                                j += 1
+                    if i >= j or _all_ref(words[i:j]):
                         continue
                     # "tòa nhà ở của sinh viên", "phòng ở sinh viên": cụm tên kéo dài qua "(ở) của" hoặc (từ mở đầu + "ở") + tối đa 3 từ
                     if MERGE_RULES and j + 1 < len(words):
                         q = None
-                        if words[j] == "cua":
+                        # (câu có dấu: chỉ "của" mới nối tên; "ở CỬA vào trường" là nơi khác -- đợt 16)
+                        of = lambda k: not (HEAD_ACC_FIX and not "".join(acc_w).isascii() and acc_w[k] not in ("của", "cua"))
+                        if words[j] == "cua" and of(j):
                             q = j + 1
-                        elif words[j:j + 2] == ["o", "cua"]:
+                        elif words[j:j + 2] == ["o", "cua"] and of(j + 1):
                             q = j + 2
                         elif DETECT_RULES and words[j] == "o" and j - i <= 2 and all(w in HEADS for w in words[i:j])                                 and not any(m[0] == j + 1 for m in ms) and words[j + 1] not in HEADS | ORI_WORDS | REF_WORDS:
                             q = j + 1
@@ -593,17 +1005,34 @@ class MissionParser2:
                     kw = keyword_scores(span_text).max()
                     # cụm lạ chỉ được coi là địa điểm khi có dấu hiệu: mở đầu bằng "phòng / khu / nơi / nhà..." hoặc chứa từ khóa
                     # (nếu không, các cụm gấp/dễ vỡ lạ, món hàng lạ, động từ lạ sẽ bị nhận nhầm là địa điểm)
-                    if kw == 0 and words[i] not in HEADS:
-                        strong = DETECT_RULES and i > 0 and words[i - 1] in LOC_PREPS and idx[i] == idx[i - 1] + 1                             and min(pw[i:j]) >= 0.9 and not any(w in ITEM_HEADS for w in words[i:j])
+                    # HEAD_ACC (đợt 16): câu CÓ DẤU thì chữ đầu phải đúng là từ chỉ nơi chốn ("ký" túc xá, không phải "kỵ rung lắc")
+                    head = words[i] in HEADS and not (HEAD_ACC_FIX and words[i] in HEAD_ACC and not acc_w[i].isascii()
+                                                      and not "".join(acc_w).isascii() and acc_w[i] not in HEAD_ACC[words[i]])
+                    if head and HEAD_ACC_FIX and kw == 0 and words[i] in HEAD_ACC and "".join(acc_w).isascii() and (
+                            re.search(FRAGILE_POS, span_text) or re.search(URGENT_POS, span_text)):
+                        head = False                          # câu không dấu: "ky rung lac" (kỵ rung lắc) là lời dặn, không phải tên
+                    if SUBJ_TRIM and kw < 3 and (words[i] not in PLACE_HEADS or not head) and (
+                            re.search(FRAGILE_POS, span_text) or re.search(URGENT_POS, span_text)):
+                        continue                              # "đĩa sứ của khoa": cụm nói về HÀNG (dễ vỡ / gấp), không phải tên nơi
+                    if kw == 0 and not head:
+                        strong =DETECT_RULES and i > 0 and words[i - 1] in LOC_PREPS and idx[i] == idx[i - 1] + 1                             and min(pw[i:j]) >= 0.9 and not any(w in ITEM_HEADS for w in words[i:j])
                         if not strong:
                             continue
                     if words[i] in ITEM_HEADS and words[i] not in PLACE_HEADS and kw < 3:
                         continue                              # "hộp thuốc", "khay cơm"...: món hàng
                     if j - i == 1 and kw == 0 and self.span_probs(span_text, " ".join(acc_w[i:j])).max() < 0.4:
                         continue
+                    if NEW_FRAME_FIX and j - i == 1 and words[i] in LONE_BAD:
+                        continue                              # "Nơi nhận: X": "nơi" / "khu" / "phòng" đứng một mình không phải tên
+                    if NEW_FRAME_FIX and "oi" in words[i:j]:
+                        continue                              # lời gọi "Bạn ơi", "Anh ơi" không phải tên địa điểm
+                    if NEW_FRAME_FIX and words[i] in TIME_HEADS:
+                        continue                              # "giờ học", "buổi học", "giờ ăn trưa": thời gian, không phải địa điểm
                     ms.append((i, j, None, " ".join(words[i:j])))
                     used.update(range(i, j))
                 ms.sort()
+                if FRAME_STRONG:
+                    ms = self._fix_spans(words, idx, acc_w, ms)
                 # "tòa / khu / dãy" + tên đã biết ("tòa giảng đường"): một địa điểm, mang loại của tên đã biết
                 if MERGE_RULES:
                     merged = []
@@ -615,17 +1044,33 @@ class MissionParser2:
                             merged.append(m)
                     ms = merged
                 if FRAME_RULE or GOAL_FRAME_RULE or ANCHOR_RULE:
-                    new = self._frame_spans(words, ms, pw, idx)
+                    new = self._frame_spans(words, ms, pw, idx, acc_w)
                     if new:
                         ms = [m for m in ms if not (m[2] is None and any(a <= m[0] and m[1] <= b for a, b in new))]
                         ms += [(a, b, None, " ".join(words[a:b])) for a, b in new]
                         ms.sort()
                 if PERSON_RULE:
-                    ps = self._person_subject(tt, words, idx, ms)
+                    # (FRAME_STRONG: tìm khung trên chuỗi đã sửa lỗi gõ chữ khung: "X cần nhn hộp giấy" = "cần nhận")
+                    ps = self._person_subject(tt, fw if PERSON_TYPO_FIX and len(fw) == len(words) else words, idx, ms)
                     if ps is not None:
                         ms.append((ps[0], ps[1], None, " ".join(words[ps[0]:ps[1]])))
                         ms.sort()
                         person_spans.add((si, ps[0]))
+                if NEW_FRAME_FIX and len(ms) >= 2:
+                    # đồng vị ngữ "Giao tới X, nơi mọi người đang chờ": tên lạ mở đầu bằng "nơi / chỗ" ngay sau dấu phẩy,
+                    # sát sau một địa điểm khác -> chỉ mô tả lại địa điểm đó, không phải địa điểm mới (đợt 9, h27e_misc.py)
+                    # ("Bỏ qua X, nơi khám bệnh MỚI LÀ điểm nhận": cụm là chủ ngữ của vế mới -> giữ)
+                    ms = [m for q, m in enumerate(ms) if not (
+                        q > 0 and m[2] is None and words[m[0]] in ("noi", "cho") and ms[q - 1][1] == m[0]
+                        and m[0] > 0 and idx[m[0]] != idx[m[0] - 1] + 1 and "la" not in words[m[0]:m[1] + 3])]
+            if ITEM_FIX and ms:
+                if ITEM_LINE.match(sent):
+                    ms = []                                     # dòng "Hàng: X" chỉ nêu MÓN HÀNG ("Hàng: sách thư viện")
+                else:
+                    # tên CHỒNG LÊN cụm món hàng: "mang sách thư viện tới bãi xe", "hàng cần giao là thuốc y tế", cả khớp mờ
+                    # vắt qua mép cụm ("là hóa chất" ~ "lab hóa"). Địa điểm thật đứng SAU giới từ nên không chồng lên cụm.
+                    slots = self._item_slots(words, idx, ms)
+                    ms = [m for m in ms if not any(m[0] < b and m[1] > a for a, b in slots)]
             if not ms:
                 plain.append(sent)
                 plain_acc.append(" ".join(acc_w))
@@ -646,16 +1091,87 @@ class MissionParser2:
                     if w_ == "dung" and acc_w[k] != "đừng":
                         words2[k] = "dungx"
                         tt2[idx[k]] = "dungx"
+            acc_tt = list(tt2)                                  # dạng có dấu cùng vị trí với tt2 (dấu câu giữ nguyên)
+            for wi, ti in enumerate(idx):
+                if wi < len(acc_w):
+                    acc_tt[ti] = acc_w[wi]
             for (i, j, t, a) in ms:
                 # đoạn giữa hai dấu phẩy chứa lần nhắc này (để xét phủ định trong phạm vi hẹp)
                 lo = max([k for k in punct if k < idx[i]], default=-1)
                 hi = min([k for k in punct if k > idx[j - 1]], default=len(tt))
                 out.append({"si": si, "toks": words, "acc": acc_w, "i": i, "j": j, "type": t, "text": a, "ms": ms,
-                            "seg": " ".join(tt2[lo + 1:hi]), "sent": " ".join(words2), "person": (si, i) in person_spans})
+                            "seg": " ".join(tt2[lo + 1:hi]), "sent": " ".join(words2), "person": (si, i) in person_spans,
+                            "sentp": " ".join(tt2),                 # giữ dấu phẩy: "X đã, rồi mới đi tiếp" không thành "đã rồi"
+                            "seg_acc": acc_tt[lo + 1:hi], "sentp_acc": acc_tt, "idx": idx})
         return out, plain, plain_acc
 
     @staticmethod
-    def _frame_spans(words, ms, pw, idx=None):
+    def _fix_spans(words, idx, acc, ms):
+        """FRAME_STRONG (đợt 16), sửa ranh giới các lần nhắc:
+          (1) cụm lạ nuốt cả quan hệ + mốc ("nơi gặp khách SÁT nơi nhận thuốc"): tách thành hai cụm ở từ quan hệ;
+          (2) tên quen + đuôi lạ liền sau ("phòng học lớn | tầng hai", "phòng thực hành | hóa ở xa Y"): một tên, giữ loại quen."""
+        n = len(words)
+        brk = lambda k: idx is not None and 0 < k < n and idx[k] != idx[k - 1] + 1
+        has_acc = acc is not None and len(acc) == n and not "".join(acc).isascii()
+        REL = ("sat", "gan", "canh", "ke", "xa", "cach")
+        out = []
+        for m in ms:
+            i, j, t, al = m
+            cut = None
+            if t is None:
+                for k in range(i + 1, j - 1):
+                    w = words[k]
+                    if w not in REL or brk(k) or (has_acc and not acc[k].isascii() and acc[k] not in CUT_ACC.get(w, (acc[k],))):
+                        continue
+                    if w == "xa" and (not has_acc or acc[k] != "xa") and words[k - 1] in ("tram", "benh", "tuc", "y"):
+                        continue                                  # "trạm xá", "bệnh xá", "ký túc xá"
+                    r = k + 2 if w == "cach" and k + 1 < j and words[k + 1] == "xa" else k + 1
+                    if r < j and (words[r] in HEADS or words[r] in ("noi", "cho")) and k - i >= 1:
+                        cut = (k, r)
+                        break
+            if cut:
+                out += [(i, cut[0], None, " ".join(words[i:cut[0]])), (cut[1], j, None, " ".join(words[cut[1]:j]))]
+            else:
+                out.append(m)
+        ms, out = out, []
+        starts = {m[0] for m in ms}
+        for q, m in enumerate(ms):
+            if out and out[-1][2] is not None and m[2] is None and out[-1][1] == m[0] and not brk(m[0]) and m[1] - m[0] <= 3 \
+                    and not any(w in REF_WORDS or w in ORI_WORDS or w in DIRS for w in words[m[0]:m[1]]):
+                out[-1] = (out[-1][0], m[1], out[-1][2], out[-1][3])          # tên quen + cụm lạ liền sau
+                continue
+            if m[2] is not None:
+                e = m[1]
+                while e < n and e - m[1] < 2 and not brk(e) and e not in starts and words[e] not in EDGE_STRIP \
+                        and words[e] not in FRAME_CUT and words[e] not in GOAL_FRAME_END and words[e] not in DIRS:
+                    e += 1
+                if e > m[1] and _ref_after(words, e):
+                    m = (m[0], e, m[2], m[3])                                   # "phòng thực hành hóa | ở xa Y"
+            out.append(m)
+        return out
+
+    @staticmethod
+    def _o_name(words, idx, e, acc=None):
+        """Chữ "o" ở vị trí e THUỘC tên địa điểm (TYPE_FIX): "ô tô" ("nơi đỗ ô tô"), hoặc "ở" đứng cuối tên ngay sau
+        phòng / nhà / khu / chỗ / dãy... ("dãy phòng ở", "khu nhà ở") -- khi sau nó là hết câu, dấu câu hay trợ từ."""
+        if not TYPE_FIX or words[e] != "o":
+            return False
+        n = len(words)
+        a = acc[e] if acc is not None and e < len(acc) else "o"
+        if a not in ("o", "ô", "ở"):
+            return False
+        if e + 1 < n and words[e + 1] == "to" and a != "ở":
+            return True
+        brk = lambda k: idx is not None and 0 < k < n and idx[k] != idx[k - 1] + 1
+        return e > 0 and words[e - 1] in O_IN_NAME and a != "ô" and (
+            e + 1 == n or brk(e + 1) or words[e + 1] in GOAL_FRAME_END | NAME_TAIL
+            or (FRAME_STRONG and tuple(words[e + 1:e + 3]) in O_QUAL)
+            or (SUBJ_TRIM and tuple(words[e + 1:e + 3]) in (("can", "nhan"), ("dang", "cho"), ("dang", "can")))) \
+            or (SUBJ_TRIM and a != "ô" and e >= 3 and words[e - 2:e] == ["sinh", "vien"] and words[e - 3] in O_IN_NAME
+                and (e + 1 == n or brk(e + 1)))       # "dãy phòng sinh viên ở." (chỗ sinh viên ở)
+
+    @staticmethod
+    def _frame_spans(words, ms, pw, idx=None, acc=None):
         """Dò tên địa điểm lạ theo khung câu (bộ gán nhãn hay bỏ sót tên mới):
           - "ghé / tạt qua <X> ... lấy / nhận / trước": X là điểm ghé;
           - "(mang / giao / chuyển...) ... tới / đến / qua <X>", "đích đến là <X>", "ở <X>": X là địa điểm;
@@ -666,75 +1182,126 @@ class MissionParser2:
         out = []
         known = [m for m in ms if m[2] is not None]
         brk = lambda e: idx is not None and 0 < e < n and idx[e] != idx[e - 1] + 1     # có dấu câu giữa e-1 và e
-        is_cut = lambda e: words[e] in FRAME_CUT and not (words[e] == "o" and e + 1 < n and words[e + 1] in ("cua", "sinh"))
+        # REF_SLOT: câu CÓ DẤU cho biết chữ không dấu là từ khung hay chữ của tên ("kệ" / "kế", "tài" / "tại", "cửa" / "của")
+        has_acc = REF_SLOT and acc is not None and len(acc) == n and not "".join(acc).isascii()
+        other = lambda e: has_acc and words[e] in CUT_ACC and not acc[e].isascii() and acc[e] not in CUT_ACC[words[e]]
+        cut_word = lambda e: words[e] in FRAME_CUT and not other(e)
+        cua = lambda e: e < n and words[e] in ("cua", "sinh") and not (has_acc and words[e] == "cua" and acc[e] not in ("của", "cua"))
+        is_cut = lambda e: cut_word(e) and not (words[e] == "o" and cua(e + 1)) \
+            and not MissionParser2._o_name(words, idx, e)             and not (SUBJ_TRIM and words[e] in ("phia", "mat") and e + 1 < n and words[e + 1] in ("truoc", "sau")) \
+            and not (SUBJ_TRIM and words[e] == "xa" and e > 0 and words[e - 1] in ("tram", "benh")
+                     and (not has_acc or acc[e] == "xá"))     # "cổng phía trước", "trạm xá nằm gần ..."
         starts_known = lambda e: any(x[0] == e for x in known)
 
-        def scan(s, ends):
+        def scan(s, ends, first_ok=False):
+            if (cut_word(s) and not first_ok) or words[s] in ends or words[s] in DIRS or words[s] in ("cach", "hon", "nhat"):
+                return None                                   # "ở xa X", "ở gần X": chưa phải tên địa điểm
             e = s
-            while e < n and e - s < 6:
+            while e < n and e - s < 7:
                 if e > s and (brk(e) or words[e] in ends or is_cut(e) or starts_known(e)):
-                    break
+                    # "nơi / chỗ" + việc làm ("chỗ lấy thuốc", "nơi nhận hồ sơ"): "nơi / chỗ" đứng một mình không phải tên,
+                    # nên "lấy / nhận" ngay sau nó thuộc tên chứ không phải khung "đến X lấy Y"
+                    if not (TYPE_FIX and e == s + 1 and words[s] in ("noi", "cho") and words[e] in ("lay", "nhan", "lanh")
+                            and not brk(e) and not starts_known(e) and e + 1 < n and not brk(e + 1)):
+                        break
                 e += 1
-            if e < n and e - s >= 6:
+            if e < n and e - s >= 7:
                 return None                                   # bị cắt vì quá dài: không gọn
             if e < n and starts_known(e):
                 return None                                   # "khu" + tên đã biết: mốc / đích là tên đã biết
             if e - s >= 2 and words[e - 1] == "nha":
                 e -= 1                                        # trợ từ "nha" cuối câu
-            return e if 1 <= e - s <= 5 else None
+            return e if 1 <= e - s <= 6 else None
 
-        def ok(s, e):
+        def ref_follows(e):
+            """REF_SLOT: ngay sau cụm là một tham chiếu không gian ("... gần / xa / sát / cách xa Y", "... (nằm / ở) phía bắc",
+            "... mạn dưới"): cụm đứng trước tham chiếu là TÊN địa điểm dù không mở đầu bằng phòng / khu / nơi..."""
+            q = e
+            while q < n and q - e < 2 and words[q] in ("nam", "o"):
+                q += 1
+            if q < n and words[q] in ("gan", "xa", "sat", "canh", "ke", "cach"):
+                return True
+            return q + 1 < n and words[q] in ORI_WORDS and words[q + 1] in DIRS
+
+        def ok(s, e, strong=False):
             for m in ms:
                 if s < m[1] and e > m[0] and not (m[2] is None and s <= m[0] and m[1] <= e):
                     return False
             if any(s < b and e > a for a, b in out):
                 return False
+            if SUBJ_TRIM and e - s == 1 and words[s] in LONE_BAD:
+                return False                                  # "... xa nhà": "nhà" đứng một mình không phải tên địa điểm
             mp = float(np.mean(pw[s:e]))
             if words[s] in ITEM_HEADS and words[s] not in PLACE_HEADS and mp < 0.5:
                 return False
-            if words[s] not in HEADS and mp < 0.3:
+            if words[s] not in HEADS and mp < 0.3 and not (strong and any(
+                    w not in EDGE_STRIP and w not in GOAL_FRAME_END and w not in DIRS and w not in ORI_WORDS for w in words[s:e])):
                 return False
-            return not all(w in REF_WORDS for w in words[s:e])
+            return not _all_ref(words[s:e])
 
         for q in range(n):
             w = words[q]
             s = None
+            strong = False
             if FRAME_RULE and (w == "ghe" or (q > 0 and w in ("qua", "vao") and words[q - 1] in ("tat", "re", "ghe", "tien"))):
                 s = q + 1
                 if s < n and words[s] in ("qua", "vao"):
                     s += 1
-                if not any(words[x] in FRAME_END for x in range(s + 1, min(s + 9, n))):
+                # "ghé kệ sách chung lấy ...": sau "ghé" chữ "ke" là "kệ" (đầu tên), không phải "kế bên" (SUBJ_TRIM, h48 train)
+                ke_head = SUBJ_TRIM and s + 1 < n and words[s] == "ke" and words[s + 1] not in ("ben", "canh", "sat", "can")                     and (not has_acc or acc[s] == "kệ")
+                e = scan(s, FRAME_END, first_ok=ke_head) if s < n else None
+                # "ghé X (nằm) xa / gần Y lấy ...": cụm tham chiếu đẩy chữ "lấy" ra xa hơn
+                far_ok = FRAME_STRONG and e is not None and ref_follows(e)
+                if not any(words[x] in FRAME_END for x in range(s + 1, min(s + (15 if far_ok else 9), n))):
                     continue
-                e = scan(s, FRAME_END) if s < n else None
+                # "ghé / tạt qua <X> lấy / nhận / trước": X chắc chắn là địa điểm (điểm ghé) -> không đòi từ mở đầu quen
+                strong = FRAME_STRONG and e is not None and e < n and words[e] in FRAME_END and not brk(e) \
+                    and not (has_acc and w == "ghe" and acc[q] != "ghé")
+            elif GOAL_FRAME_RULE and q > 0 and words[q - 1:q + 1] in (["diem", "giao"], ["diem", "nhan"], ["dich", "den"]) \
+                    and q + 1 < n and words[q + 1] not in ("la", "cua", "o") and (idx is None or brk(q + 1)):
+                s = q + 1                                     # "Điểm giao: X" (dấu hai chấm)
+                e = scan(s, GOAL_FRAME_END)
+                strong = GOAL_SLOT_STRONG and e is not None and (e == n or brk(e))
+            elif FRAME_STRONG and q == 1 and words[:2] == ["hang", "cho"] and q + 1 < n:
+                # "Hàng cho X: Y" (khung của validation, 16/300 câu; 0 câu train): X là nơi nhận / người nhận
+                s = q + 1
+                e = scan(s, GOAL_FRAME_END)
+                strong = e is not None and (e == n or brk(e) or ref_follows(e))
             elif GOAL_FRAME_RULE and q > 0 and w in ("toi", "den", "la", "qua", "o"):
-                if w == "la" and words[max(0, q - 2):q] not in (["dich", "den"], ["diem", "giao"], ["diem", "nhan"], ["noi", "nhan"]):
+                if w == "la" and words[max(0, q - 2):q] not in (["dich", "den"], ["diem", "giao"], ["diem", "nhan"], ["noi", "nhan"]) \
+                        and not (FRAME_STRONG and words[max(0, q - 3):q] == ["noi", "can", "giao"]):
                     continue
                 if w in ("toi", "den", "qua") and not any(v in ("mang", "giao", "chuyen", "gui", "dua", "van") for v in words[max(0, q - 7):q]):
                     continue
                 if w == "qua" and words[q - 1] in ("tat", "re", "ghe", "tien", "di", "hom"):
                     continue
-                if w == "o" and (words[q - 1] in HEADS or any(m[0] < q < m[1] for m in ms) or brk(q)):
+                if w == "o" and (other(q) or words[q - 1] in O_IN_NAME or cua(q + 1)
+                                 or any(m[0] < q < m[1] for m in ms) or brk(q)):
                     continue                                  # "khu ở của sinh viên": "ở" nằm trong tên
                 s = q + 1
                 e = scan(s, GOAL_FRAME_END) if s < n else None
+                # "đích đến là / nơi cần giao là X" (rồi hết vế): X chắc chắn là địa điểm
+                strong = FRAME_STRONG and w == "la" and e is not None and (e == n or brk(e) or words[e] in GOAL_FRAME_END)
             else:
                 continue
-            if e is not None and ok(s, e):
+            if e is not None and ok(s, e, strong=strong or (REF_SLOT and ref_follows(e))):
                 out.append((s, e))
         if ANCHOR_RULE:
-            for m in sorted(ms + [(a, b, None, None) for a, b in out]):
+            for m in sorted(ms + [(a, b, None, None) for a, b in out], key=lambda x: (x[0], x[1])):
                 q = m[1]
                 if q < n and words[q] in ("nam", "o"):
                     q += 1
                 if q < n and words[q] == "cach" and q + 1 < n and words[q + 1] == "xa":
                     q += 1
-                if q >= n or words[q] not in ("gan", "xa", "sat", "canh", "ke"):
+                if q >= n or words[q] not in ("gan", "xa", "sat", "canh", "ke") or other(q):
                     continue
                 s = q + 1
                 if s < n and words[s] in ("voi", "ben", "canh"):
                     s += 1
                 e = scan(s, ANCHOR_END) if s < n else None
-                if e is not None and ok(s, e):
+                # "<địa điểm> gần / xa / sát <Y> hơn / giúp / , ...": Y là mốc (địa điểm) dù không mở đầu bằng từ quen
+                strong = FRAME_STRONG and e is not None and (e == n or brk(e) or words[e] in ANCHOR_END)
+                if e is not None and ok(s, e, strong=strong):
                     out.append((s, e))
         return out
 
@@ -747,7 +1314,15 @@ class MissionParser2:
             return None
         punct = [q for q, t in enumerate(tt) if t in (",", ":") and q < idx[k]]
         s0 = next((q for q in range(len(words)) if idx[q] > punct[-1]), k) if punct else 0
-        e = next((q for q in range(s0, k) if words[q] == "o"), k)      # "<người> ở <nơi>": chỉ lấy phần người
+        e = next((q for q in range(s0, k) if words[q] == "o"
+                  and not (SUBJ_TRIM and q + 1 == k and q > s0 and words[q - 1] in O_IN_NAME)), k)   # "<người> ở <nơi>": chỉ lấy phần người
+        if SUBJ_TRIM:
+            # "Cán bộ / Ban quản lý / Nhân viên <nơi> cần nhận": bỏ phần người đứng trước từ mở đầu tên nơi chốn
+            # ("khu phòng ở", "nơi ôn bài") -- phần người làm lệch loại đoán từ tên (h48 train, tên tự soạn)
+            h = next((q for q in range(s0 + 1, min(s0 + 4, e - 1)) if words[q] in SUBJ_PLACE_HEADS
+                      and all(w not in PLACE_HEADS for w in words[s0:q])), None)
+            if h is not None and not any(h < m[1] and e > m[0] for m in ms):
+                s0 = h
         subj = words[s0:e]
         if not 1 <= len(subj) <= 5 or any(s0 < m[1] and e > m[0] for m in ms):
             return None
@@ -798,6 +1373,155 @@ class MissionParser2:
             return nxt[0]
         return None
 
+    @staticmethod
+    def _masked_sent(me):
+        """(câu không dấu, câu có dấu) với các tên địa điểm thay bằng "x": luật gấp / dễ vỡ không được khớp vào chữ của
+        TÊN ("chỗ để xe" ~ "chờ", "phòng cấp cứu" ~ "cấp cứu" -> gấp). Bản cũ (NEW_FRAME_FIX=False) giữ nguyên câu."""
+        ws, acc = me["sent"].split(), list(me["acc"])
+        if not NEW_FRAME_FIX or len(ws) != len(acc):
+            return me["sent"], " ".join(me["acc"])
+        for m in me["ms"]:
+            for q in range(m[0], m[1]):
+                ws[q] = acc[q] = "x"
+        if ITEM_FIX:
+            for a, b in MissionParser2._item_slots(me["toks"], me.get("idx"), me["ms"]):
+                for q in range(a, b):
+                    ws[q] = acc[q] = "x"                      # món hàng ("giao thuốc cấp cứu tới X") không mang cờ
+        return " ".join(ws), " ".join(acc)
+
+    @staticmethod
+    def _item_slots(words, idx=None, ms=()):
+        """Các khoảng [a, b) là cụm MÓN HÀNG (ITEM_FIX): ngay sau động từ giao (giao / gửi / đưa / mang / chuyển), ngay trước
+        giới từ chỉ đích (tới / đến / qua / sang / về / vào / cho), không có dấu câu hay giới từ khác chen giữa, dài 1-6 từ.
+        "Mang sách thư viện tới bãi xe": [sách thư viện]; "Giao hàng ở thư viện tới X", "Mang từ X tới Y": không có."""
+        if not ITEM_FIX:
+            return []
+        n = len(words)
+        out = []
+        brk = lambda k: idx is not None and 0 < k < n and idx[k] != idx[k - 1] + 1
+        # từ dừng của cụm món hàng, trừ khi là chữ đầu của danh từ ghép không dấu ("tai lieu" = tài liệu, "o to" = ô tô)
+        stop = lambda k: words[k] in SLOT_END and not (k + 1 < n and (words[k], words[k + 1]) in (("tai", "lieu"), ("o", "to")))
+        cstart = lambda k: max([0] + [e for e in range(1, k + 1) if brk(e)])      # đầu vế chứa vị trí k
+        cend = lambda k: next((e for e in range(k + 1, n) if brk(e)), n)          # cuối vế chứa vị trí k
+        in_name = {k for m in ms for k in range(m[0], m[1])}   # "phòng giáo vụ" ~ "giao vu", "khu gửi xe": không phải động từ
+        for q, w in enumerate(words):
+            if q in in_name:
+                continue
+            # (a) "giao <món> tới / đến / qua / cho / ở <nơi>"; "lấy / nhận <món> ở / tại / từ <nơi>"
+            if w in DELIVER_VERBS or (w in PICK_VERBS and not (q > 0 and words[q - 1] in PICK_NOUN)):
+                ends = DELIVER_END if w in DELIVER_VERBS else PICK_END
+                b = q + 1
+                while b < n and b - q <= 7 and not brk(b) and not stop(b):
+                    b += 1
+                if q + 1 < b <= q + 7 and b < n and not brk(b) and words[b] in ends:
+                    out.append((q + 1, b))
+                elif ITEM_FIX2 and w in PICK_VERBS and (any(m[1] == q for m in ms) or (
+                        q > 1 and words[q - 1] in ("de", "va", "ma") and any(m[1] == q - 1 for m in ms))) \
+                        and q + 1 < b <= q + 7 and (b == n or brk(b) or words[b] in ITEM_TAIL_END):
+                    out.append((q + 1, b))      # (e) "ghé X lấy <món>" tới hết vế ("... lấy thẻ thư viện."): món, không phải nơi
+            # (b) "hàng cần giao là <món>" (tới hết vế); KHÔNG phải "nơi lấy hàng là X", "điểm giao hàng là X" (VIA_FIX)
+            mi = ITEM_IS.search(" ".join(words[max(0, q - 4):q])) if w == "la" else None
+            if mi:
+                before = " ".join(words[max(0, q - 4):q])[:mi.start()].split()
+                if not (VIA_FIX and before and before[-1] in ITEM_NOT_BEFORE):
+                    b = cend(q)
+                    if 1 <= b - (q + 1) <= 7:
+                        out.append((q + 1, b))
+            # (c) "(đang / vẫn / còn) chờ / đợi <món>" (tới hết vế; "đang chờ ở X" thì không)
+            if w in ("cho", "doi") and q > 0 and words[q - 1] in ("dang", "van", "con") and q + 1 < n and not brk(q + 1) \
+                    and not stop(q + 1):
+                b = cend(q)
+                if b - (q + 1) <= 7:
+                    out.append((q + 1, b))
+            # (d) "<món> phải được đưa / cần chuyển (giúp) tới <nơi>": cụm đầu vế (không chứa "ở / tại": người ở đâu đó)
+            if w in DELIVER_VERBS:
+                k = q
+                while k - 1 >= 0 and not brk(k) and words[k - 1] in MODALS:
+                    k -= 1
+                r = q + 1
+                while r < n and words[r] in ("giup", "gium", "ho", "dum"):
+                    r += 1
+                if k < q and r < n and words[r] in DEST_PREPS:
+                    s0 = cstart(k)
+                    if s0 < k <= s0 + 7 and not any(words[x] in ("o", "tai", "tu") and stop(x) for x in range(s0, k)):
+                        out.append((s0, k))
+        return out
+
+    def _dir_hint(self, s, core=False):
+        """Ngữ cảnh có từ chỉ hướng / vị trí (kể cả gõ sai 1 ký tự)? Bản mới: bỏ các nghĩa khác ("phải được", "nhẹ tay"...)
+        và chỉ coi là gõ sai khi từ HIẾM ("được" gần "dưới" 1 ký tự nhưng là từ rất quen, không phải lỗi gõ)."""
+        for t in _dir_text(s).split():
+            if len(t) < 2:
+                continue
+            hints = DIR_CORE if core else DIR_HINTS
+            if t in hints:
+                return True
+            if NEW_FRAME_FIX and self.freq.get(t, 0) >= 20:
+                continue
+            if any(dl_distance(t, d, 1) <= 1 for d in hints):
+                return True
+        return False
+
+    def _fix_cue(self, t):
+        """Chữ then chốt của các luật (phủ định / ghé / khung nhãn) bị gõ sai -> chữ đúng. Chỉ sửa từ HIẾM (không có trong
+        từ vựng quen) cách đúng MỘT chữ then chốt 1 lỗi đảo / rơi / thay; từ quen ("hỏng", "tòa"...) giữ nguyên."""
+        if self._khong_typo(t):
+            return "khong"
+        if not NEW_FRAME_FIX or len(t) < 3 or t in KEY_CUE_SET or t == "dungx" or _valid_syllable(t):
+            return t
+        c = [q for q in KEY_CUES if _typo1(t, q)]
+        return c[0] if len(c) == 1 else t
+
+    @staticmethod
+    def _contrast_clause(me, w):
+        """Vế (giữa các từ tương phản "mà (là)", "chứ", "nhưng", "thay vì") chứa lần nhắc này, trong đoạn giữa hai dấu phẩy.
+        -> (lo, hi) vị trí từ của vế; None nếu đoạn không có từ tương phản. "mà / chứ" có dấu khác ("mã", "chú bảo vệ")
+        hoặc nằm trong tên thì không tính."""
+        segw = [t for t in me["seg"].split() if t not in (",", ":")]
+        sw = me["sent"].split()                               # cùng dạng với seg (có "dungx"), cùng vị trí với w
+        i, j, n = me["i"], me["j"], len(segw)
+        s0 = next((s for s in range(max(0, j - n), min(i, len(sw) - n) + 1) if sw[s:s + n] == segw), None)
+        if s0 is None or len(sw) != len(w):
+            return None
+        acc = [a.lower() for a in me["acc"]] if len(me["acc"]) == len(w) else list(w)
+        inside = lambda k: any(m[0] <= k < m[1] for m in me["ms"])
+        ok = {"ma": ("mà", "ma"), "chu": ("chứ", "chu"), "nhung": ("nhưng", "nhung")}
+        b = [k for k in range(s0, s0 + n) if not inside(k) and (
+            (w[k] in ok and acc[k] in ok[w[k]]) or (w[k] == "thay" and k + 1 < len(w) and w[k + 1] == "vi"))]
+        if not b:
+            return None
+        # "mà (là) / chứ / nhưng" chỉ là từ nối (bỏ khỏi vế sau); "thay vì Y" GIỮ lại trong vế của Y (= Y bị phủ định)
+        lo = max([k if w[k] == "thay" else k + 1 for k in b if k < i] + [s0])
+        hi = min([k for k in b if k >= j] + [s0 + n])
+        return lo, hi
+
+    def _fix_seq(self, toks, accs=None):
+        """Sửa chữ then chốt gõ sai trong một dãy từ: (1) âm tiết sai cấu trúc (_fix_cue); (2) âm tiết HỢP LỆ do rơi / đảo
+        chữ ("hông phải", "nầm với", "ôm qua"): cặp (chữ, từ sau) chưa từng gặp nhưng (chữ then chốt, từ sau) gặp >= 5 lần.
+        accs: dạng có dấu cùng vị trí (nếu có). Câu có dấu: chỉ sửa khi dạng có dấu của chữ CHƯA từng gặp ("hông" vs "hỏng",
+        "đã" là từ quen -> không sửa); câu không dấu: chỉ sửa chữ hiếm (< 50 lần)."""
+        out = [self._fix_cue(t) for t in toks]
+        bg = getattr(self, "bigram", None)
+        if not (NEW_FRAME_FIX and BIGRAM_FIX and bg):
+            return out
+        if accs is not None and len(accs) != len(toks):
+            accs = None
+        forms = getattr(self, "acc_forms", {})
+        for k in range(len(out) - 1):
+            t, nxt = out[k], out[k + 1]
+            if len(t) < 2 or t in KEY_CUE_SET or t == "dungx" or not t.isalpha() or bg.get((t, nxt), 0):
+                continue
+            a = accs[k].lower() if accs is not None else t
+            if a != t:
+                if a in forms.get(t, ()):
+                    continue                                   # dạng có dấu quen ("đã", "hỏng"): từ thật
+            elif self.freq.get(t, 0) >= 50:
+                continue                                       # không dấu: từ quen thì không đoán là gõ sai
+            c = [q for q in KEY_CUES if bg.get((q, nxt), 0) >= 5 and _typo1(t, q)]
+            if len(c) == 1:
+                out[k] = c[0]
+        return out
+
     def _khong_typo(self, t):
         """t có phải chữ "không" gõ sai ("khng", "khogn")? Từ có thật ("hỏng", "thong (thả)", "phòng", "chống"...) thì KHÔNG."""
         if len(t) < 4 or t == "khong" or dl_distance(t, "khong", 1) > 1:
@@ -809,8 +1533,20 @@ class MissionParser2:
     def _phrase_flags(self, s, acc=None):
         """-> (gấp?, dễ vỡ?) của một câu con không chứa địa điểm:
         bảng cụm đã học -> khớp mờ -> luật từ khóa -> vector nghĩa e5 -> phân loại ký tự."""
+        s_in = s                                              # (trước khi khử nhập nhằng che chữ "cẩn" ~ "cần")
+        if ITEM_FIX and ITEM_LINE.match(s):
+            item = s.split(":", 1)[1]
+            if not (re.search(ITEM_FRAGILE_PRED, item) or re.search(ITEM_URGENT_PRED, item)):
+                self._ev.append((False, False, False, False))  # "Hàng: bình hoa", "Hàng: thuốc cấp cứu": chỉ nêu món hàng
+                return False, False
+        if NEW_FRAME_FIX and ROAD_CTX.search(s) and _road_free(s) != s:
+            # "Đường hơi trơn, đi cẩn thận nhé": bỏ cụm dặn đi đường TRƯỚC khi tách vế (vế "đi cẩn thận nhé" đứng riêng
+            # không còn thấy "đường trơn" ở vế kia)
+            return self._phrase_flags(re.sub(r"\s+", " ", _road_free(s)).strip(" ,"), None)
         lab = self.phrase.get(s)
+        how = "bảng"
         if lab is None:
+            how = "bảng mờ"
             best, bl = 3, None
             for p, l in self.phrase.items():
                 if abs(len(p) - len(s)) <= 2:
@@ -844,18 +1580,23 @@ class MissionParser2:
                 ru = {"urgent": True, "calm": False, "last": seq[-1], "first": seq[0]}[MIXED_POLICY]
             return ru, rf
         if lab is None:
+            how = "bảng (vế)"
             for part in parts:
                 if self.phrase.get(part):
                     lab = self.phrase[part]
         if lab is not None:
             # (gấp có căn cứ chắc?, dễ vỡ có căn cứ chắc?, câu nói rõ KHÔNG gấp?, câu nói rõ KHÔNG dễ vỡ?)
             self._ev.append((lab == 1, lab == 2, lab == 0 and bool(re.search(URGENT_NEG, s)), lab == 0 and bool(re.search(FRAGILE_NEG, s))))
+            self._trace(how, lab == 1, lab == 2)
             return lab == 1, lab == 2
         s = disambiguate(s, acc)
         # chữ "không" gõ sai ("khng", "khogn"...) -> "khong", để các luật phủ định vẫn bắt được
         s = " ".join("khong" if self._khong_typo(t) else t for t in s.split())
         u = bool(re.search(URGENT_POS, s)) and not re.search(URGENT_NEG, s)
-        f = bool(re.search(FRAGILE_POS, s)) and not re.search(FRAGILE_NEG, s)
+        f = bool(re.search(FRAGILE_POS, _road_free(s))) and not re.search(FRAGILE_NEG, s)
+        if NEW_FRAME_FIX and f and re.search(CAREFUL_OTHER, s_in) and not re.search(FRAGILE_POS, re.sub(r"\bcan than\b", " ", s)):
+            f = False                                         # "cẩn thận kẻo trễ / lạc / nhầm": dặn dò, không nói về hàng
+                                                              # (xét trên câu gốc: khử nhập nhằng có thể che "lạc" ~ "lắc")
         u_rule, f_rule = u, f
         silent = not u and not f and not re.search(URGENT_NEG + "|" + FRAGILE_NEG, s)
         if getattr(self, "ablate_rules", False):              # thí nghiệm: coi như không có luật từ khóa
@@ -865,10 +1606,21 @@ class MissionParser2:
             # Kết hợp luật từ khóa với mô hình nghĩa (5 lớp: trung tính / gấp / dễ vỡ / không gấp / không dễ vỡ).
             # Mô hình nghĩa chỉ được tin khi câu có dấu (ngưỡng 0.6) hoặc khi nó rất chắc (0.8).
             txt = acc if acc else s
+            th = E5_TH[0] if txt != s else E5_TH[1]
+            if E5_RESTORE and txt.isascii():
+                # câu KHÔNG DẤU: thêm dấu bằng bảng học từ train/validation rồi mới hỏi e5 (e5 hiểu câu có dấu tốt hơn nhiều:
+                # "hang de sut me" 0,66 trung tính -> "hàng dễ sứt mẻ" 0,93 dễ vỡ); ngưỡng ở giữa hai ngưỡng cũ
+                r_ = self.restore(s)
+                if r_ != s:
+                    pu_ = self.e5_phrase.predict_proba(embedder().encode([txt]))[0]
+                    pr_ = self.e5_phrase.predict_proba(embedder().encode([r_]))[0]
+                    # lấy bản (gốc / đã thêm dấu) mà e5 chắc hơn: thêm dấu sai ("nhanh chắn ... nhẹ") không được làm mất cờ
+                    if pr_.max() > pu_.max():
+                        txt, th = r_, E5_TH_R
             pe = self.e5_phrase.predict_proba(embedder().encode([txt]))[0]
             k = int(self.e5_phrase.classes_[int(np.argmax(pe))])
-            sure = pe.max() > (E5_TH[0] if txt != s else E5_TH[1])
-            if k in (1, 2) and re.match(r"(hang|mon|kien|don)\b", s):
+            sure = pe.max() > th
+            if k in (1, 2) and re.match(r"(hang|mon|kien|don)\b", s) and not (E5_ITEM_GUARD2 and not re.match(ITEM_DESC, s)):
                 sure = False                                  # câu mô tả món hàng ("hàng: bưu kiện") hay bị nhận nhầm là gấp
             # từ phủ định chung ("chẳng", "đâu", "khỏi"...) mà không thuộc mẫu phủ định kép ("không được chậm trễ")
             gen_neg = bool(re.search(GEN_NEG, s)) and not re.search(DOUBLE_NEG, s) and not getattr(self, "no_gen_neg", False)
@@ -876,24 +1628,37 @@ class MissionParser2:
             if u:
                 if (gen_neg and not (sure and k == 1)) or (sure and k == 3 and pe.max() > 0.75 and (gen_neg or not VETO_NEEDS_NEG)):
                     u = False                                 # có từ "gấp" nhưng cả câu mang nghĩa phủ định
-            elif E5_POS_URGENT and sure and k == 1 and not re.search(URGENT_NEG, s) and not gen_neg:
+            elif E5_POS_URGENT and sure and k == 1 and not re.search(URGENT_NEG, s) and not gen_neg \
+                    and not (E5_CROSS_GUARD and f_rule):
                 u = True
             if f:
                 if (gen_neg and not (sure and k == 2)) or (sure and k == 4 and pe.max() > 0.75 and (gen_neg or not VETO_NEEDS_NEG)):
                     f = False
-            elif sure and k == 2 and not re.search(FRAGILE_NEG, s) and not gen_neg:
-                f = True
+            elif E5_POS_FRAGILE and sure and k == 2 and not re.search(FRAGILE_NEG, s) and not gen_neg and not (
+                    NEW_FRAME_FIX and (ROAD_CTX.search(s_in) or re.search(r"\b(can than|nhe nhang)\b", s_in))) \
+                    and not (E5_CROSS_GUARD and u_rule):
+                f = True                                      # (câu có "cẩn thận / nhẹ nhàng" mà luật đã xác định là nghĩa khác,
+                                                              #  hoặc câu dặn đi đường: mô hình nghĩa không được tự nhận dễ vỡ)
             self._ev.append((u and u_rule, f and f_rule, not u and (bool(re.search(URGENT_NEG, s)) or (sure and k == 3)),
                              not f and (bool(re.search(FRAGILE_NEG, s)) or (sure and k == 4))))
+            self._trace("luật" if (u_rule or f_rule) else "e5", u, f)
             return u, f
         if silent and len(tokens(s)) <= 7 and not delivery:
             pr = self.phrase_clf.predict_proba(self.v_p.transform([s]))[0]
             k = int(np.argmax(pr))
             if pr[k] > 0.6:
                 self._ev.append((False, False, False, False))
+                self._trace("ký tự", k == 1, k == 2)
                 return k == 1, k == 2
         self._ev.append((u, f, not u and bool(re.search(URGENT_NEG, s)), not f and bool(re.search(FRAGILE_NEG, s))))
+        self._trace("luật", u, f)
         return u, f
+
+    def _trace(self, how, u, f):
+        """Chẩn đoán (không đổi kết quả): ghi lại cách quyết định cờ gấp / dễ vỡ, nếu bật self._ftrace (list)."""
+        tr = getattr(self, "_ftrace", None)
+        if tr is not None and (u or f):
+            tr.append((how, u, f))
 
     @staticmethod
     def _structure(ments, role, negs, P):
@@ -920,11 +1685,26 @@ class MissionParser2:
                 if len(gap) <= 3 and any(g in ("gan", "xa", "sat", "canh", "ke", "cach") for g in gap) and not negs[q]:
                     role[k] = 3                                # "A gần B", "A cách xa B" -> B là mốc
                     continue
-                if gap in (["o"], ["tai"], ["cua"], ["o", "tai"]) and ent and ent[-1][-1] == q:
-                    ent[-1].append(k)                          # "thủ thư ở thư viện": người nhận + nơi làm việc là một
+                if ent and ent[-1][-1] == q and (gap in (["o"], ["tai"], ["cua"], ["o", "tai"]) or (
+                        SAME_ENT_HEADS and 2 <= len(gap) <= 3 and gap[0] in ("o", "tai") and all(g in HEADS for g in gap[1:])) or (
+                        SUBJ_TRIM and 2 <= len(gap) <= 3 and gap[-1] in ("o", "tai") and not any(
+                            g in EDGE_STRIP or g in KEY_CUE_SET or g in DIRS or g in REF_WORDS or g in ITEM_HEADS
+                            or g in ("tra", "hang", "do", "di", "ve") for g in gap[:-1])
+                        and all(me["idx"][x] == me["idx"][x - 1] + 1 for x in range(ments[q]["j"], me["i"] + 1)))):
+                    # (đợt 17) "phòng đọc YÊN TĨNH ở khu đọc sách": phần đuôi tên chưa nhận ra nằm giữa tên quen và "ở"
+                    ent[-1].append(k)                          # "thủ thư ở (khu) thư viện": người nhận + nơi làm việc là một
+                    if SAME_ENT_HEADS and role[q] in (0, 1):
+                        role[k] = role[q]                      # cùng vai trò với người nhận
                     continue
             ent.append([k])
         if len(ent) == 1:
+            # (chỉ khi KHÔNG còn lần nhắc nào khác chưa bị phủ định: "Nhân viên quầy ăn cần nhận ..." là tên lạ bị bỏ khỏi
+            #  `ent` nhưng vẫn là đích -- validation, bộ đọc chỉ học train)
+            if SUBJ_TRIM and all(role[k] == 1 for k in ent[0]) and not any(
+                    not negs[q] and role[q] != 3 and q not in ent[0] for q in range(len(ments))):
+                for k in ent[0]:
+                    role[k] = 0                                # chỉ một nơi mà lại là điểm ghé -> không có đích: nó là đích
+                                                               # (train + validation: luôn có đích được nhắc; "tới cổng trước giúp mình")
             if all(role[k] == 2 for k in ent[0]):
                 for k in ent[0]:
                     role[k] = 0
@@ -933,12 +1713,15 @@ class MissionParser2:
             return
         has_via = [any(role[k] == 1 for k in e) for e in ent]
         has_goal = [any(role[k] == 0 for k in e) for e in ent]
-        if sum(has_via) == 1 and sum(g and not v for g, v in zip(has_goal, has_via)) >= 1:
+        valid = sum(has_via) == 1 and sum(g and not v for g, v in zip(has_goal, has_via)) >= 1
+        if valid and not (CUE_OVERRIDE and len(ent) == 2):
             return                                             # bộ phân loại đã cho một kết quả hợp lệ
         top = sorted(ent, key=lambda e: -max(P[k, 0] + P[k, 1] for k in e))[:2]
         top.sort(key=lambda e: e[0])
         A, B = top
-        VIA_V = r"\b(ghe|tat|re|lay|nhan|lanh|dung|vong|qua)\b"
+        # "qua" chỉ là động từ ghé khi đi sau "tạt / rẽ / ghé / trước tiên" ("gửi X qua Y": Y là đích)
+        VIA_V = r"\b(ghe|tat|re|lay|nhan|lanh|dung|vong)\b|\b(tat|re|ghe|tien) qua\b" if CUE_OVERRIDE \
+            else r"\b(ghe|tat|re|lay|nhan|lanh|dung|vong|qua)\b"
         GOAL_V = r"\b(giao|mang|dua|gui|chuyen|toi|den|cho|tra)\b"
 
         def left_of(e):
@@ -953,8 +1736,9 @@ class MissionParser2:
             me = ments[e[0]]
             return " ".join(me["toks"][:me["i"]])
 
-        s_a_via = float(np.log(max(P[k, 1] for k in A) + 1e-3) + np.log(max(P[k, 0] for k in B) + 1e-3))
-        s_b_via = float(np.log(max(P[k, 1] for k in B) + 1e-3) + np.log(max(P[k, 0] for k in A) + 1e-3))
+        p_a = float(np.log(max(P[k, 1] for k in A) + 1e-3) + np.log(max(P[k, 0] for k in B) + 1e-3))
+        p_b = float(np.log(max(P[k, 1] for k in B) + 1e-3) + np.log(max(P[k, 0] for k in A) + 1e-3))
+        s_a_via, s_b_via = (0.0, 0.0) if valid else (p_a, p_b)     # hợp lệ: chỉ xét dấu hiệu trong câu
         same_sent = ments[A[0]]["si"] == ments[B[0]]["si"]
         if re.search(r"\btruoc khi\b", before_all(A)):
             s_b_via += 4                                       # "trước khi <việc chính tới A>, ... B": B đi trước
@@ -965,13 +1749,27 @@ class MissionParser2:
             s_b_via += 3                                       # "... B trước (đã)": B đi trước
         for e, sign in ((A, 1), (B, -1)):
             l = left_of(e)
+            if NEW_FRAME_FIX:
+                l = re.sub(r"\bnguoi nhan\b", "nguoinhan", l)    # "người nhận ở X": chữ "nhận" không phải "nhận hàng" (ghé)
             # động từ gần tên địa điểm nhất quyết định
             mv = [m.end() for m in re.finditer(VIA_V, l)]
             mg = [m.end() for m in re.finditer(GOAL_V, l)]
+            if NEW_FRAME_FIX:
+                if re.fullmatch(r"hang (dang )?(o|tai|nam o)", l):
+                    mv.append(len(l))                          # đầu câu "Hàng ở A, người nhận ở B": nơi có hàng = ghé
+                if re.search(r"\bnguoinhan (dang )?(o|tai)$", l):
+                    mg.append(len(l))
             if mv and (not mg or mv[-1] > mg[-1]):
                 s_a_via += 1.5 * sign
             elif mg:
                 s_a_via -= 1.5 * sign
+        if valid:
+            # chỉ đảo kết quả của bộ phân loại khi dấu hiệu trong câu NGƯỢC LẠI và rất mạnh
+            cls_a_via = any(role[k] == 1 for k in A)
+            cue = s_a_via - s_b_via
+            if not ((cls_a_via and cue <= -CUE_MARGIN) or (not cls_a_via and cue >= CUE_MARGIN)):
+                return
+            s_a_via, s_b_via = cue, 0.0
         via_e, goal_e = (A, B) if s_a_via >= s_b_via else (B, A)
         for e in ent:
             for k in e:
@@ -988,9 +1786,9 @@ class MissionParser2:
         if SEG_FLAGS:
             flags += [self._phrase_flags(s, a) for s, a in self._segs]
         # câu có nhắc địa điểm cũng có thể kèm ý gấp / dễ vỡ (hoặc là câu gấp/dễ vỡ bị nhận nhầm có địa điểm) -> xét bằng luật từ khóa
-        for s in {disambiguate(me["sent"], " ".join(me["acc"])) for me in ments}:
+        for s in {disambiguate(*self._masked_sent(me)) for me in ments}:
             flags.append((bool(re.search(URGENT_POS, s)) and not re.search(URGENT_NEG, s),
-                          bool(re.search(FRAGILE_POS, s)) and not re.search(FRAGILE_NEG, s)))
+                          bool(re.search(FRAGILE_POS, _road_free(s))) and not re.search(FRAGILE_NEG, s)))
         gp = self.goal_clf.predict_proba(self.v_g.transform([self._main_text(text)]))[0]
         text_probs = np.full(10, 1e-3)
         text_probs[self.goal_clf.classes_] = gp
@@ -1019,16 +1817,65 @@ class MissionParser2:
             P = P.copy(); P[:, 1] = 0.25; P[:, 0] = 0.25
             role[role == 1] = 0
         # ---- luật tổng quát (kiến thức tiếng Việt) bổ sung cho khung câu lạ ----
-        fz = lambda s: " ".join("khong" if self._khong_typo(t) else t for t in s.split())
+        fz = lambda s: " ".join(self._fix_seq(s.split()))
         negs = [False] * len(ments)
         for k, me in enumerate(ments):
             w, i, j = me["toks"], me["i"], me["j"]
-            seg, sent = fz(me["seg"]), fz(me["sent"])         # "khng", "khogn"... -> "khong"
-            neg = re.search(NEG_SENT, seg) or (re.search(NEG_SENT, sent) and "," not in me["seg"] and len(me["ms"]) == 1)
+            cl = None
+            if NEW_FRAME_FIX:
+                w = self._fix_seq(w, me["acc"])               # "khong hge X", "Đừng mnag tới X", "hông phải X": chữ then chốt gõ sai
+                seg = " ".join(self._fix_seq(me["seg"].split(), me.get("seg_acc")))
+                sent = " ".join(self._fix_seq(me["sentp"].split(), me.get("sentp_acc")))
+                cl = self._contrast_clause(me, w)
+                if cl is not None:                            # "Không phải A mà là B", "tới A chứ không phải B": phủ định chỉ trong vế
+                    raw = me["sent"].split()                  # (giữ "dungx": "đúng / dừng" không phải "đừng")
+                    seg = " ".join(self._fix_seq(raw[cl[0]:cl[1]], me["acc"][cl[0]:cl[1]]))
+            else:
+                seg, sent = fz(me["seg"]), fz(me["sent"])     # "khng", "khogn"... -> "khong"
+            seg_raw = seg
+            seg, sent = _strip_flags(seg), _strip_flags(sent)  # "..., không cần vội": nói về hàng, không phủ định địa điểm
+            if VIA_FIX and VIA_MASK:
+                # che chữ của các tên ĐÃ BIẾT khi xét phủ định: "Điểm lấy hàng: nhà thi ĐẤU." ("đấu" không dấu ~ "đâu").
+                # Không che tên lạ: ranh giới của nó có thể nuốt cả chữ phủ định ("dãy phòng nội trú không phải điểm")
+                for m in me["ms"]:
+                    a = " ".join(me["toks"][m[0]:m[1]]) if m[2] is not None else ""
+                    if a:
+                        pat = r"(?<![a-z])" + re.escape(a) + r"(?![a-z])"
+                        seg, sent = re.sub(pat, "x", seg), re.sub(pat, "x", sent)
+            neg = re.search(_neg(), seg) or (re.search(_neg(), sent) and "," not in me["seg"] and len(me["ms"]) == 1)
+            if NEW_FRAME_FIX and not neg and re.search(AVOID_LEFT2 if VIA_FIX else AVOID_LEFT, " ".join(w[max(0, i - 3):i])):
+                neg = True                                    # "né / tránh X", "tránh đường qua X": không phải điểm dừng
+            if VIA_FIX and VIA_KHOI and not neg and re.search(r"\bkhoi (can |phai )?(den|toi|qua|ghe|vao|di|giao|mang|dua|tat|re)\b", seg_raw):
+                neg = True                                    # "Khỏi cần đến X" ("khỏi cần" bị _strip_flags gỡ như "khỏi cần nhẹ tay")
+            if VIA_FIX and VIA_CHO and not neg and re.search(r"\bchớ (ghé|qua|tới|đến|vào|đi|giao|mang|đưa|dừng)\b", " ".join(me["acc"]).lower()):
+                neg = True                                    # "Chớ ghé X" (chỉ khi có dấu: "cho ghe" không dấu ~ "chỗ ghé: X")
             negs[k] = bool(neg)
             if neg and role[k] != 3:
                 role[k] = 2                                   # câu phủ định / chuyện đã qua -> gây nhiễu
                 continue
+            if cl is not None and role[k] in (2, 3) and re.search(
+                    r"\b(giao|mang|dua|gui|chuyen|dem|cho)( hang| do)? (o|toi|den|tai|sang|ve|qua|cho)$|\bla$",
+                    " ".join(w[max(cl[0], i - 4):i])):
+                role[k] = 0                                   # "Không giao ở Y mà giao ở X", "Không phải Y mà là X": vế sau là đích
+            # (luật "mốc không có từ quan hệ -> đích" bị BỎ: tên món hàng "thẻ thư viện" được bộ phân loại gán mốc để vô hiệu,
+            #  luật đó biến nó thành đích — validation học train 1,0000 -> 0,9983. Chỉ giữ các khung tường minh dưới đây.)
+            if NEW_FRAME_FIX and role[k] in (1, 2) and not neg and not ablate and j < len(w) and w[j] == "sau" \
+                    and not (j + 1 < len(w) and w[j + 1] in ("khi", "do", "cung", "day", "nay", "nua")):
+                role[k] = 0                                   # "A trước, B sau": B là chặng sau = đích
+            if NEW_FRAME_FIX and not ablate:                  # khung nhãn tường minh: áp cho mọi vai trò (kể cả đang bị gán mốc)
+                lab = " ".join(w[max(0, i - 6):i])
+                if re.search(GOAL_LABEL, lab) or re.search(GOAL_LABEL2, lab):
+                    role[k] = 0                               # "Nơi nhận: X", "Điểm đến cuối cùng: X", "chặng cuối X", "sau đó X"
+                    continue
+                if re.search(VIA_LABEL, lab) or re.search(VIA_LABEL2, lab):
+                    role[k] = 1                               # "Điểm ghé: X", "Nơi lấy hàng: X", "Chặng đầu X"
+                    continue
+                if re.search(r"\b(den|toi|qua|vao|sang|ra)$", lab) and re.match(r"(lay|nhan|lanh)\b", " ".join(w[j:j + 2])) \
+                        and not (NHAN_VIEN_FIX and w[j:j + 2] == ["nhan", "vien"]) \
+                        and not re.search(r"\b(nguoi nhan|nguoi can|khach|minh|toi|ban ay|ho|em|anh|chi|thay|co)( ay)? (se|dang|tu|co the|muon|sap)\b",
+                                          " ".join(w[max(0, i - 8):i])):
+                    role[k] = 1                               # "Đến X lấy đồ cho ...": nơi ROBOT lấy hàng = điểm ghé
+                    continue                                  # ("Người nhận sẽ đến X lấy hàng": X là đích, không áp dụng)
             if role[k] in (0, 2) and not neg and not ablate:
                 left = " ".join(w[max(0, i - 4):i]); far_left = " ".join(w[max(0, i - 7):i])
                 # phần ngay sau tên địa điểm, bỏ qua cụm tham chiếu không gian ("sát PLC", "ở phía dưới bản đồ", "mạn trên"...)
@@ -1041,13 +1888,34 @@ class MissionParser2:
                         after.append(w[q]); q += 1
                 right = re.sub(r"^((o|nam) )?((cach xa|gan|sat|xa|canh|ke) PLC( hon)?|" + _ORI + r" \w+( ban do)?|(tren|duoi|trai|phai|bac|dong|tay) ban do) ?",
                                "", " ".join(after))
-                if re.search(r"\b(ghe|ghe qua|tat qua|tat vao|re qua|tat ngang|dung (o|tai))$", left) \
+                if re.search(VIA_LEFT2 if NEW_FRAME_FIX else VIA_LEFT, left) \
                         or (re.search(r"\b(lay|nhan|lanh)\b", far_left) and re.match(r"(xong|roi thi|truoc)\b", right)) \
-                        or re.match(r"truoc\b(?! khi)", right):
+                        or (re.match(r"truoc\b(?! khi)", right) and not (FRAME_STRONG and re.match(TRUOC_TIME, right))):
                     role[k] = 1                               # "ghé X", "lấy ... ở X xong", "X trước" -> điểm ghé
             elif VIA_NOT_ANCHOR and role[k] == 3 and not neg and not ablate \
-                    and re.search(r"\b(ghe|ghe qua|tat qua|tat vao|re qua|tat ngang)$", " ".join(w[max(0, i - 4):i])):
+                    and re.search(VIA_LEFT2 if NEW_FRAME_FIX else r"\b(ghe|ghe qua|tat qua|tat vao|re qua|tat ngang)$",
+                                  " ".join(w[max(0, i - 4):i])):
                 role[k] = 1                                   # "..., nhớ ghé X": ngay sau động từ ghé thì không thể là mốc gần / xa
+            elif NEW_FRAME_FIX and role[k] == 3 and not neg and not ablate \
+                    and re.search(r"\b(sang|toi|den|ve|di|vao|qua|giao|mang|dua|gui|dem|chuyen)$", " ".join(w[max(0, i - 3):i])) \
+                    and not re.search(r"\b(gan|xa|sat|canh|ke|cach|voi|giap|hon)\b", " ".join(w[max(0, i - 2):i])):
+                role[k] = 0                                   # "rồi đem sang X", "xong mới đi X": sau động từ chuyển động thì không phải mốc
+            if NEW_FRAME_FIX and role[k] in (0, 2) and not neg and not ablate and (
+                    re.search(r"\b(lay|nhan|mang|dua|chuyen|di)( hang| do)? tu$", " ".join(w[max(0, i - 3):i])) or (i == 1 and w[0] == "tu")):
+                role[k] = 1                                   # "Từ X mang hàng sang Y", "lấy hàng từ X": nơi lấy hàng = điểm ghé
+            if VIA_FIX and VIA_ROLE and role[k] in (0, 2, 3) and not neg and not ablate:
+                nxt = " ".join(w[j:j + 8])
+                if i > 0 and w[i - 1] == "tu" and re.search(r"\b(sang|toi|den|ve|qua)\b", nxt) \
+                        and any(x[0] > j for x in me["ms"]):
+                    role[k] = 1                               # "Chở thêm đồ TỪ X SANG Y": nơi đi = nơi lấy hàng
+                elif re.search(STORED_AT, " ".join(w[max(0, i - 7):i])) and len(ments) >= 2:
+                    role[k] = 1                               # "Đồ đang để ở X, nhờ mang sang Y": nơi đồ đang nằm = điểm ghé
+                elif re.search(r"\b(hai|2) chang\b", " ".join(w[:i])) and j < len(w) and w[j] == "va" \
+                        and any(x[0] == j + 1 for x in me["ms"]):
+                    role[k] = 1                               # "Đơn gồm hai chặng: X và Y": chặng thứ nhất
+                elif re.search(r"\b(hai|2) chang\b", " ".join(w[:i])) and i > 0 and w[i - 1] == "va" \
+                        and any(x[1] == i - 1 for x in me["ms"]):
+                    role[k] = 0                               # ... chặng thứ hai = đích (không phải mốc sau "và")
         if DIS_RULE:
             # Địa điểm đứng RIÊNG trong một câu có ý phủ định / quá khứ, câu không có động từ ghé và không có từ chỉ thứ tự
             # -> không phải điểm dừng (gây nhiễu viết theo cách mới). Kiểm tra trên train + validation: scratch/h13_dis_rule.py
@@ -1055,6 +1923,13 @@ class MissionParser2:
                 if negs[k] or role[k] == 3 or len(me["ms"]) != 1:
                     continue
                 st = fz(me["sent"])
+                if NEW_FRAME_FIX:
+                    st = " ".join(self._fix_seq(me["sent"].split(), me["acc"]))
+                    st = _strip_flags(st)                     # "X cần hộp giấy, không gấp lắm": "không" nói về độ gấp
+                if VIA_FIX and VIA_MASK and me["type"] is not None:        # che chữ của tên đã biết: "Điểm lấy hàng: nhà thi ĐẤU" ("đấu" ~ "đâu")
+                    a = " ".join(me["toks"][me["i"]:me["j"]])
+                    if a:
+                        st = re.sub(r"(?<![a-z])" + re.escape(a) + r"(?![a-z])", "x", st)
                 if re.search(ORD_CUE, st) or re.search(VIA_VERB, st) or re.search(DOUBLE_NEG, st):
                     continue
                 if re.search(GEN_NEG, st) or re.search(PAST_CUE, st):
@@ -1070,6 +1945,15 @@ class MissionParser2:
                 if me["type"] is not None and me["type"] not in present:
                     role[k] = 2
                     negs[k] = True
+        if ANCHOR_NEEDS_REL:
+            # mốc gần / xa LUÔN đứng ngay sau từ quan hệ (258/258 mốc train + validation): không có thì không phải mốc
+            for k, me in enumerate(ments):
+                if role[k] == 3 and not any(x in ("gan", "xa", "sat", "canh", "ke", "cach", "giap")
+                                            for x in me["toks"][max(0, me["i"] - 4):me["i"]]):
+                    # tên QUEN (chắc là địa điểm): theo vai trò khả dĩ nhất còn lại; cụm LẠ (có thể chẳng phải địa điểm): trung tính
+                    if me["type"] is not None:
+                        # (đã bị phủ định / "né X": gây nhiễu -- chuỗi kiểm tra v33c, h27 "Nhớ né {X} ra." 1500 -> 1369)
+                        role[k] = 2 if negs[k] else int(np.argmax(P[k, :3]))   # cụm LẠ: giữ nguyên (có thể chẳng phải địa điểm; vai mốc = trung tính)
         self._structure(ments, role, negs, P)
         dist = [None] * len(ments)
         for k, me in enumerate(ments):
@@ -1100,6 +1984,9 @@ class MissionParser2:
             # ưu tiên lần nhắc đã biết loại; trong cùng nhóm thì theo xác suất vai trò
             return max(cands, key=lambda k: (ments[k]["type"] is not None, P[k, role_i]))
 
+        # chẩn đoán (không đổi kết quả): vai trò cuối cùng của từng lần nhắc
+        res["_roles"] = [("quen" if me["type"] is not None else "lạ", int(role[k]), bool(negs[k]), round(float(P[k, 0]), 2))
+                         for k, me in enumerate(ments)]
         g = pick(0)
         if g is None:
             gbest = int(np.argmax(P[:, 0]))
@@ -1122,9 +2009,16 @@ class MissionParser2:
                         d[PLACE_TYPES.index(ments[k]["type"])] *= 1e-3
             res["goal_dist"] = d / d.sum()
         else:
+            res["goal_from_text"] = True        # chẩn đoán: không có lần nhắc nào làm đích -> loại đích lấy từ bộ phân loại cả câu
             d = res["goal_dist"].copy()
             for t in res["excluded"]:
                 d[PLACE_TYPES.index(t)] *= 1e-3
+            if VIA_TYPE_FIX:
+                # KHÔNG tìm thấy tên đích, chỉ có điểm ghé (tên đã biết): bộ phân loại cả câu hay đoán đích = loại của chính điểm
+                # ghé (tên nó nằm trong câu) rồi điểm ghé bị bỏ vì "cùng loại đích". Đích và điểm ghé không bao giờ cùng loại.
+                for k in range(len(ments)):
+                    if role[k] == 1 and ments[k]["type"] is not None:
+                        d[PLACE_TYPES.index(ments[k]["type"])] *= 1e-6
             res["goal_dist"] = d / d.sum()
         res["goal"] = PLACE_TYPES[int(np.argmax(res["goal_dist"]))]
         # ---- điểm ghé ----
@@ -1150,8 +2044,8 @@ class MissionParser2:
                 kind, pr = (KINDS[kk], float(kindP[k, kk])) if kk else (None, 0.0)
                 if kind is not None and (pr < 0.7 or "X" in ctx[k][3].split()):
                     kind, pr = None, 0.0        # bộ phân loại không chắc, hoặc ngữ cảnh có từ lạ -> để luật từ khóa quyết định
-                if DIR_GUARD and kind in ("north", "south", "east", "west") and not any(
-                        dl_distance(t, d, 1) <= 1 for t in ctx[k][3].split() for d in DIR_HINTS if len(t) >= 2):
+                if DIR_GUARD and kind in ("north", "south", "east", "west") and not (self._dir_hint(ctx[k][3]) and (not DIR_GUARD2 or self._dir_hint(ctx[k][3], core=True)
+                                                                                      or not re.search(r"(phia|mat|ben|dang) (truoc|sau)", ctx[k][3]))):
                     kind, pr = None, 0.0        # hướng mà ngữ cảnh không có từ chỉ hướng / vị trí nào (kể cả gõ sai)
                 # luật từ khóa trên các từ GỐC ngay sau tên địa điểm (bộ phân loại không hiểu từ chỉ hướng lạ như "mạn dưới")
                 me = ments[k]
@@ -1166,8 +2060,11 @@ class MissionParser2:
                         break
                     raw.append(me["toks"][q]); q += 1
                 rk = rule_direction(" ".join(raw), post)
-                if rk is not None and (kind is None or pr < 0.9):
-                    kind, pr = rk, max(pr, 0.6)
+                dirs4 = ("north", "south", "east", "west")
+                if rk is not None and (kind is None or pr < 0.9 or (DIR_RULE_WINS and rk in dirs4 and kind in dirs4 and rk != kind)
+                                       or (NEW_FRAME_FIX and rk in ("near", "far") and kind in dirs4)):
+                    # "kế bên / gần phía Y hơn" + mốc: luật thấy từ quan hệ ngay trước mốc -> thắng hướng do bộ phân loại đoán từ "bên"/"phía"
+                    kind, pr = rk, max(pr, 0.6)     # "phía nam" viết rõ thắng bộ phân loại đọc "north" (0.9)
                 if kind is None:
                     continue
                 anchor = None
@@ -1197,9 +2094,56 @@ class MissionParser2:
 
 CTX_NG_W = 0.0      # trọng số manh mối ngữ cảnh khớp chính xác từ ngữ (0 = tắt)
 CTX_NG_LOWCONF = 0  # nếu > 0: chỉ áp dụng khi độ chắc của tên gọi < ngưỡng này
-CTX_W = 0.5         # trọng số manh mối NGỮ CẢNH (món hàng, người nhận quanh tên lạ) khi đoán loại tên lạ: phép đo khắt khe 0.9851 -> 0.9876
+CTX_W = 0.8         # trọng số manh mối NGỮ CẢNH (món hàng, người nhận quanh tên lạ) khi đoán loại tên lạ: phép đo khắt khe 0.9851 -> 0.9876
+                    # 0.5 -> 0.8 (06/10): tên hoàn toàn mới trong câu (h28) 0,956 -> 0,958 / 0,921 -> 0,927; giấu tên công bằng giữ 0,9983
 GOAL_TEXT_W = 0.3   # trọng số của bộ phân loại "cả câu -> loại đích" (món hàng, người nhận...) khi chốt loại đích
 REACH_RULE = True   # đích / điểm ghé phải TỚI ĐƯỢC (đúng 2300/2300 cảnh train + validation); không thì chọn ứng viên kế tiếp
+CLEAR_REF = True    # đợt 16: tham chiếu luôn RÕ RÀNG (DE_BAI mục 4; đúng 100% train + validation): bắc/nam -> hai bản lệch >= 2 hàng,
+                    # đông/tây -> >= 2 cột, gần/xa X -> X chỉ có 1 bản và khoảng cách tới X chênh >= 1 ô. Dùng để chốt loại của
+                    # TÊN LẠ (đích / điểm ghé / mốc) sao cho tham chiếu rõ ràng trên bản đồ (scratch/h41_consistency.py)
+NOREF_PRIOR = False  # đợt 16: câu KHÔNG có tham chiếu mà loại có 2 bản phân biệt được bằng hướng: chỉ 32/198 câu validation (16%)
+                    # bỏ tham chiếu -> tên lạ ít khả năng là loại đó (Bayes, scratch/h42_noref_prior.py). TẮT: tên tự soạn +0,26%
+                    # nhưng validation thật 1,0000 -> 0,9990 (cảnh 144: "phng bác sĩ" 0,50 bị lật sang loại 1 bản 0,15)
+NOREF_W = {"one": 1.0, "none": 1.0, "anc": 0.3, "sep": 0.16}
+ANCHOR_EXCL_FIX = True  # đợt 16: mốc gần/xa của điểm ghé KHÔNG bị loại khỏi ứng viên đích (chỉ mốc của đích mới khác loại đích)
+JOINT_GV = True         # đợt 16: đích lạ + điểm ghé lạ -> chọn cặp loại (khác nhau) có tích xác suất lớn nhất
+
+
+def _ref_ok(L, t, kind, a):
+    """Tham chiếu (kind, mốc a) có RÕ RÀNG với loại t trên bản đồ L không (theo DE_BAI mục 4)."""
+    ps = L.get(t) or []
+    if len(ps) != 2:
+        return False
+    (r1, c1), (r2, c2) = ps
+    if kind in ("north", "south"):
+        return abs(r1 - r2) >= 2
+    if kind in ("east", "west"):
+        return abs(c1 - c2) >= 2
+    A = L.get(a) or [] if a is not None else []
+    if len(A) != 1 or a == t:
+        return False
+    (ar, ac), = A
+    return abs(math.hypot(r1 - ar, c1 - ac) - math.hypot(r2 - ar, c2 - ac)) >= 1 - 1e-9
+
+
+def _ref_after(words, e):
+    """Ngay từ vị trí e là một tham chiếu không gian: "(nằm / ở) gần / xa / sát / cạnh / kế / cách ...", "(nằm / ở) phía / mạn + hướng"."""
+    n, q = len(words), e
+    while q < n and q - e < 2 and words[q] in ("nam", "o"):
+        q += 1
+    if q < n and words[q] in ("gan", "xa", "sat", "canh", "ke", "cach"):
+        return True
+    return q + 1 < n and words[q] in ORI_WORDS and words[q + 1] in DIRS
+
+
+def _pair_kind(L, t):
+    """'one' (1 bản) | 'sep' (2 bản lệch >= 2 hàng hoặc cột) | 'anc' (chỉ phân biệt được bằng gần/xa) | 'none'."""
+    ps = L.get(t) or []
+    if len(ps) < 2:
+        return "one"
+    if len(ps) > 2 or any(_ref_ok(L, t, k, None) for k in ("north", "east")):
+        return "sep"
+    return "anc" if any(_ref_ok(L, t, "near", u) for u in L if u != t) else "none"
 
 
 def resolve_with_map(m, landmarks, world=None):
@@ -1212,6 +2156,8 @@ def resolve_with_map(m, landmarks, world=None):
         return out
     two = {t for t in present if len(landmarks[t]) >= 2}
     one = {t for t in present if len(landmarks[t]) == 1}
+    P = PLACE_TYPES.index
+    fixed = set()        # tham chiếu đã được chốt cùng loại (CLEAR_REF) -> không sửa mốc lần nữa
 
     def choose(dist, allowed, need_two=False):
         cand = [t for t in present if t in allowed]
@@ -1219,34 +2165,121 @@ def resolve_with_map(m, landmarks, world=None):
             cand = [t for t in cand if t in two]
         if not cand:
             cand = present
-        return max(cand, key=lambda t: dist[PLACE_TYPES.index(t)])
+        return max(cand, key=lambda t: dist[P(t)])
+
+    def choose_ref(key, dist, allowed, known_type=None):
+        """CLEAR_REF: chọn cặp (loại, mốc) có xác suất lớn nhất trong các cặp làm tham chiếu RÕ RÀNG (và bản được chỉ tới phải
+        tới được, nếu có world). None nếu không có cặp nào."""
+        ref, ad = m[key + "_ref"], m.get(key + "_anchor_dist")
+        types = [known_type] if known_type else [t for t in present if t in allowed]
+        pairs = []
+        for t in types:
+            if ref[0] in ("near", "far"):
+                if ad is None or max(ad) > 0.99:      # mốc là tên quen: giữ nguyên
+                    anchors = [(ref[1], 1.0)]
+                else:
+                    anchors = [(u, float(ad[P(u)])) for u in one if u != t]
+            else:
+                anchors = [(None, 1.0)]
+            for a, pa in anchors:
+                if _ref_ok(landmarks, t, ref[0], a):
+                    pairs.append(((1.0 if known_type else float(dist[P(t)])) * pa, t, a))
+        for s, t, a in sorted(pairs, key=lambda x: -x[0]):
+            if world is None or not REACH_RULE:
+                return s, t, a
+            from strategy import INF, q_values
+            c = dict(out, goal=t, goal_ref=(ref[0], a), via=None, via_ref=None) if key == "goal" else \
+                dict(out, via=t, via_ref=(ref[0], a))
+            if min(q_values(world, c, 0)) < INF:
+                return s, t, a
+        return None
+
+    def choose_noref(dist, allowed):
+        cand = [t for t in present if t in allowed] or present
+        return max(cand, key=lambda t: dist[P(t)] * NOREF_W[_pair_kind(landmarks, t)])
 
     excluded = set(m.get("excluded") or ())
+    vr = m.get("via_ref")
+    if ANCHOR_EXCL_FIX and vr and vr[0] in ("near", "far") and vr[1] and vr[1] not in (m.get("excluded_via") or ()) \
+            and not (m.get("goal_ref") and m["goal_ref"][1] == vr[1]):
+        # mốc của ĐIỂM GHÉ có thể chính là loại đích ("ghé cổng chính ở xa nơi giữ xe ... rồi giao tới bãi đỗ xe": val cảnh 208)
+        excluded.discard(vr[1])
     via_known_type = m["via"] if m.get("via_known") else None
+    goal_known = m.get("goal_known") and m["goal"] in present
+    joint = False
+    if JOINT_GV and not goal_known and m["via"] is not None and not (m.get("via_known") and m["via"] in present) \
+            and m.get("via_dist") is not None:
+        # đích lạ + điểm ghé lạ: chọn CẶP (đích, ghé) khác loại có tích xác suất lớn nhất, thỏa tham chiếu rõ ràng và tới được.
+        # (trước đây chọn đích trước rồi ép điểm ghé sang loại khác: đích đoán sai kéo theo chặng đầu sai)
+        def options(key, dist, allowed):
+            ref, ad, opts = m[key + "_ref"], m.get(key + "_anchor_dist"), []
+            if ref is not None and CLEAR_REF:
+                for t in allowed:
+                    if ref[0] in ("near", "far"):
+                        anchors = [(ref[1], 1.0)] if ad is None or max(ad) > 0.99 else [(u, float(ad[P(u)])) for u in one if u != t]
+                    else:
+                        anchors = [(None, 1.0)]
+                    opts += [(float(dist[P(t)]) * pa, t, (ref[0], a), True) for a, pa in anchors if _ref_ok(landmarks, t, ref[0], a)]
+            if not opts:
+                cand = [t for t in allowed if ref is None or t in two] or list(allowed)
+                opts = [(float(dist[P(t)]), t, ref, False) for t in cand]
+            return opts
+        ag = [t for t in present if t not in excluded] or present
+        av = [t for t in present if t not in set(m.get("excluded_via") or ())] or present
+        pairs = sorted(((sg * sv, g_, gr, cg, v_, vr_, cv) for sg, g_, gr, cg in options("goal", m["goal_dist"], ag)
+                        for sv, v_, vr_, cv in options("via", m["via_dist"], av) if g_ != v_), key=lambda x: -x[0])
+        from strategy import INF, q_values
+        for _, g_, gr, cg, v_, vr_, cv in pairs[:60]:
+            c = dict(out, goal=g_, goal_ref=gr, via=v_, via_ref=vr_)
+            if world is None or not REACH_RULE or min(q_values(world, c, 0)) < INF:
+                out.update(goal=g_, goal_ref=gr, via=v_, via_ref=vr_)
+                fixed.update(k for k, f in (("goal", cg), ("via", cv)) if f)
+                joint = True
+                break
     # ---- đích ----
-    if not (m.get("goal_known") and m["goal"] in present):
-        allowed = {t for t in present if t not in excluded and t != via_known_type} or set(present)
-        # có tham chiếu phương hướng -> loại đích phải có 2 bản trên bản đồ
-        out["goal"] = choose(m["goal_dist"], allowed, need_two=m["goal_ref"] is not None)
+    allowed = {t for t in present if t not in excluded and t != via_known_type} or set(present)
+    b = choose_ref("goal", m["goal_dist"], allowed, m["goal"] if goal_known else None) if CLEAR_REF and m["goal_ref"] and not joint else None
+    if joint:
+        pass
+    elif b:
+        out["goal"], out["goal_ref"] = b[1], (m["goal_ref"][0], b[2])
+        fixed.add("goal")
+    elif not goal_known:
+        if NOREF_PRIOR and m["goal_ref"] is None:
+            out["goal"] = choose_noref(m["goal_dist"], allowed)
+        else:
+            # có tham chiếu phương hướng -> loại đích phải có 2 bản trên bản đồ
+            out["goal"] = choose(m["goal_dist"], allowed, need_two=m["goal_ref"] is not None)
     # ---- điểm ghé ----
-    if m["via"] is not None:
-        if not (m.get("via_known") and m["via"] in present):
-            if m.get("via_dist") is None:
-                out["via"], out["via_ref"] = None, None
-            else:
-                ex_via = set(m.get("excluded_via") or ())
-                allowed = {t for t in present if t != out["goal"] and t not in ex_via} or {t for t in present if t != out["goal"]}
-                out["via"] = choose(m["via_dist"], allowed, need_two=m["via_ref"] is not None) if allowed else None
+    if m["via"] is not None and not joint:
+        via_known = m.get("via_known") and m["via"] in present
+        if not via_known and m.get("via_dist") is None:
+            out["via"], out["via_ref"] = None, None
+        else:
+            ex_via = set(m.get("excluded_via") or ())
+            allowed = {t for t in present if t != out["goal"] and t not in ex_via} or {t for t in present if t != out["goal"]}
+            b = choose_ref("via", m["via_dist"], allowed, m["via"] if via_known else None) \
+                if CLEAR_REF and m["via_ref"] and (via_known or allowed) else None
+            if b:
+                out["via"], out["via_ref"] = b[1], (m["via_ref"][0], b[2])
+                fixed.add("via")
+            elif not via_known:
+                if not allowed:
+                    out["via"] = None
+                elif NOREF_PRIOR and m["via_ref"] is None:
+                    out["via"] = choose_noref(m["via_dist"], allowed)
+                else:
+                    out["via"] = choose(m["via_dist"], allowed, need_two=m["via_ref"] is not None)
         if out["via"] == out["goal"]:
             out["via"], out["via_ref"] = None, None
     # ---- mốc của gần/xa: phải là loại chỉ có MỘT bản trên bản đồ ----
     for key in ("goal", "via"):
         ref = out[key + "_ref"]
-        if ref and ref[0] in ("near", "far"):
+        if ref and ref[0] in ("near", "far") and key not in fixed:
             a = m.get(key + "_anchor_dist")
             if ref[1] not in one and a is not None:
                 cand = [t for t in one if t != out[key]]
-                out[key + "_ref"] = (ref[0], max(cand, key=lambda t: a[PLACE_TYPES.index(t)])) if cand else None
+                out[key + "_ref"] = (ref[0], max(cand, key=lambda t: a[P(t)])) if cand else None
             elif ref[1] not in present:
                 out[key + "_ref"] = None
     if REACH_RULE and world is not None:

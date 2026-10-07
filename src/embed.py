@@ -39,9 +39,9 @@ class Embedder:
         self.cache = pickle.load(open(self.cache_path, "rb")) if self.cache_path.exists() else {}
         self._dirty = 0
 
-    def encode(self, texts, batch=64):
-        """-> mảng (n, 384) đã chuẩn hóa độ dài. Có cache theo chuỗi."""
-        texts = ["query: " + t for t in texts]
+    def encode(self, texts, batch=64, prefix="query: "):
+        """-> mảng (n, 384) đã chuẩn hóa độ dài. Có cache theo chuỗi (gồm cả tiền tố "query: " / "passage: " của e5)."""
+        texts = [prefix + t for t in texts]
         todo = sorted({t for t in texts if t not in self.cache})
         for i in range(0, len(todo), batch):
             chunk = todo[i:i + batch]
@@ -61,8 +61,16 @@ class Embedder:
         return np.array([self.cache[t] for t in texts])
 
     def save(self):
+        """Ghi nguyên khối (file tạm + thay thế): nhiều tiến trình cùng ghi cache không làm hỏng file."""
         if self._dirty:
-            pickle.dump(self.cache, open(self.cache_path, "wb"))
+            import os
+            tmp = self.cache_path.with_suffix(f".{os.getpid()}.tmp")
+            with open(tmp, "wb") as f:
+                pickle.dump(self.cache, f)
+            try:
+                os.replace(tmp, self.cache_path)
+            except OSError:                    # file đang bị tiến trình khác mở: bỏ qua, cache chỉ để chạy nhanh hơn
+                os.remove(tmp)
             self._dirty = 0
 
 

@@ -39,6 +39,7 @@ def main(mode, epochs=6):
     torch.manual_seed(0); np.random.seed(0)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     d = np.load(CACHE / "cvdata_train.npz"); X, Y = d["edge_x"], d["edge_y"]
+    X, Y = with_strong(X, Y, "edge")
     dv = np.load(CACHE / "cvdata_validation.npz"); Xv, Yv = dv["edge_x"], dv["edge_y"]
     if mode == "final":
         X, Y = np.concatenate([X, Xv]), np.concatenate([Y, Yv])
@@ -74,12 +75,17 @@ def main(mode, epochs=6):
         return err
 
     t0 = time.time()
+    run_loss = []
     for ep in range(epochs):
         perm = torch.randperm(len(X))
         for i in range(0, len(X), bs):
             if (i // bs) % 200 == 0:
-                print(f"      ep {ep + 1} bước {i // bs}/{len(X) // bs} ({time.time() - t0:.0f}s)", flush=True)
+                ml = f" loss tb {np.mean(run_loss):.4f}" if run_loss else ""
+                print(f"      ep {ep + 1} bước {i // bs}/{len(X) // bs} ({time.time() - t0:.0f}s){ml}", flush=True)
+                run_loss = []
             idx = perm[i:i + bs]
+            if len(idx) < 32:
+                continue          # lô cuối quá nhỏ (bản final: 3 mẫu) -> BatchNorm trên 3 mẫu làm gradient nhảy vọt, bỏ qua
             xb = to_float(Xg[idx].to(dev)); yb = Yg[idx].to(dev)
             if np.random.rand() < 0.5:                   # lật dọc: không đổi nhãn
                 xb = xb.flip(2)
@@ -92,7 +98,12 @@ def main(mode, epochs=6):
             # đầu ra nào không có nhãn hợp lệ trong lô (vd chữ thời tiết ở lô cuối nhỏ) thì bỏ qua: tránh loss = nan
             loss = sum(F.cross_entropy(z[k], yb[:, k], label_smoothing=0.02, ignore_index=-1)
                        for k in range(3) if (yb[:, k] >= 0).any())
-            opt.zero_grad(); loss.backward(); opt.step(); sched.step()
+            opt.zero_grad(); loss.backward()
+            # bản final (học thêm validation) từng phân kỳ ở epoch 1-2 với cùng tốc độ học (loss 0,24 -> 1,09 -> 1,66):
+            # cắt chuẩn gradient chặn các bước nhảy vọt mà không đổi hướng học
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 2.0)
+            opt.step(); sched.step()
+            run_loss.append(loss.item())
         print(f"   epoch {ep + 1}/{epochs} loss {loss.item():.4f} lỗi trên validation (kiểu nét / bậc thang / một chiều) {evaluate()}  ({time.time() - t0:.0f}s)", flush=True)
     folder = OUT / f"models_{mode}"
     folder.mkdir(exist_ok=True)

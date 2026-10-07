@@ -40,6 +40,13 @@ _AFTER_ORI_OK = {"trong", "ngoai", "sau", "truoc", "kia", "nay", "canh", "nhan",
                  # các từ THẬT dài 3 chữ cái chỉ cách một từ chỉ hướng đúng 1 ký tự: không được "sửa" chúng
                  "tai", "bao", "dan", "nam", "tay", "bac", "ban", "cao", "con", "hay", "may", "noi", "tam", "tan", "tao",
                  "thi", "tho", "tra", "tre", "tro", "tru", "dau", "dua", "duc", "dung", "dut"}
+# từ THẬT chỉ khác từ chỉ hướng do THAY một chữ (lỗi gõ của dữ liệu chỉ là đảo / rơi chữ, không thay chữ):
+# "kế bên cổng trường" từng bị "sửa" thành "kế bên đông trường" (scratch/h27_paraphrase.py). Kiến thức chung, không lấy từ test.
+_AFTER_ORI_OK |= {"cong", "ham", "day", "bai", "tram", "cuoi", "tran", "bong", "song", "long", "rong", "hong", "nong", "mong",
+                  "dang", "cay", "bay", "say", "vay", "tat", "tau", "ray", "lay", "bat", "bach", "cac", "mac", "lac",
+                  "nao", "nan", "nau", "lam", "cam", "dam", "sam", "then", "tien", "treo", "tron", "duoc", "tuoi",
+                  "muoi", "nuoi", "suoi", "trao", "trau", "phat", "phan", "phao", "khai", "thai"}
+# ("dui", "don", "hai"... KHÔNG thêm: chúng là lỗi rơi chữ thật của "duoi", "dong", "phai")
 SPATIAL_TYPO_FIX = True
 
 

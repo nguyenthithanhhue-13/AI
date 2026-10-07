@@ -44,7 +44,8 @@ def scene_images(split):
     return [rows[i]["image"] for i in range(0, len(rows), 10)]
 
 
-def run(split, mode, procs=11):
+def run(split, mode, procs=None):
+    procs = procs or int(os.environ.get("PROCS", "11"))     # máy thiếu bộ nhớ ảo: PROCS=6
     images = scene_images(split)
     det_path = CACHE / f"det_{split}_{mode}.pkl"
     dets = pickle.load(open(det_path, "rb")) if det_path.exists() else {}

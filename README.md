@@ -36,8 +36,18 @@ Chi tiết, số đo và phần "giảng lại cho đội" nằm trong [GIAI_THI
 Xem [CAP_NHAT_06-10.md](CAP_NHAT_06-10.md). Tóm tắt: thêm 4 CNN nhỏ (đoạn đường, giao lộ có lớp "không phải giao lộ",
 chú giải, thời tiết), sửa cách tìm biểu tượng thời tiết, sửa lỗi gõ chỉ hướng / "không" / tên gọi lệch một từ.
 Validation (CV thật + NLP chỉ học train): **1,0000**; train (cấu hình nộp bài): **1,0000**; NLP giấu tên gọi: 0,9973.
-File nộp mới: `outputs/predictions.json` (bản sao `outputs/cac_ban_nop_cu/predictions_v19_cnn_cv_typo.json`).
-Các bảng bên dưới là số đo cũ.
+v19 được **0,9778** trên bảng xếp hạng. Lượt 2–3 (06/10): NLP chịu được khung câu mới tự soạn (`scratch/h27_paraphrase.py`:
+146 phép thử đạt 1,0000), CNN đoạn đường học thêm ảnh làm méo mạnh, chiến thuật robot được xác nhận "ghim" chặt
+(`scratch/h26_policy_margin.py`).
+Lượt 4 (06/10 chiều, xem đầu CAP_NHAT_06-10.md): đoán loại tên gọi mới (`TYPE_FIX`), món hàng không cướp vai địa điểm /
+không mang cờ (`ITEM_FIX`), tắt cờ dễ vỡ do riêng mô hình nghĩa e5 bật (`E5_POS_FRAGILE`), "bên tay phải" / "mé trái"
+(`SPATIAL_FIX2`). Validation đo công bằng nhất (CV dev + NLP chỉ học train, `scratch/h34_fair_e2e.py`): **1,0000**.
+Bảng xếp hạng: v31c = 0,9733 (< v28 = 0,9778) cho thấy cờ dễ vỡ do e5 bật trên test phần lớn đúng -> đã bật lại (v32a).
+Lượt 5 (06/10 khuya, xem đầu CAP_NHAT_06-10.md): phép thử mới đặt tên lạ vào câu validation thật
+(`scratch/h48_alias_swap.py`) tìm ra các lỗi hệ thống về tham chiếu rõ ràng, chọn cặp đích / điểm ghé, khung "Hàng cho X:",
+dấu tiếng Việt khử nhập nhằng, ranh giới tên, cờ dễ vỡ cách nói mới.
+File nộp mới: `outputs/predictions.json` (xem bảng "Điểm bảng xếp hạng" bên dưới). Các bảng kết quả validation bên dưới là
+số đo cũ.
 
 ## Kết quả đo trên validation (macro accuracy)
 
@@ -63,7 +73,20 @@ bản đồ; độ đúng của bước đó trên test không đo được. Xem
 | file trong `outputs/cac_ban_nop_cu/` | nội dung | điểm bảng xếp hạng |
 |---|---|---|
 | `predictions_v2_lb0.9322.json` | NLP bản 2 (tìm tên gọi lạ theo ngữ cảnh + từ khóa + bản đồ) | **0,9322** (robot yếu nhất 0,8611) |
-| `predictions_v19_cnn_cv_typo.json` (= `predictions.json`) | 4 CNN cho CV + sửa lỗi gõ NLP; train và validation 1,0000 | chưa nộp |
+| `predictions_v34c_spans_flags.json` (= `predictions.json`) | v33 + đợt 17: sửa lỗi của v33 ("Nhớ né X ra" bị thành điểm ghé), khung "Điểm giao: X.", chủ ngữ "Ban quản lý / Cán bộ <nơi>", cụm món hàng không phải địa điểm ("trứng gà"), "cổng phía trước", "trạm xá", dấu khử nhập nhằng ở mép tên, cờ dễ vỡ / gấp cách nói mới (mã mới + bộ đọc đã học của v32b). Khác v32b: 45 dòng / 16 cảnh | chưa nộp |
+| `predictions_v33_ref_frames_flags.json` | v32b + lượt 5 (CÓ LỖI "né X" -> thay bằng v34c): tham chiếu rõ ràng, chọn cặp đích / điểm ghé, khung "Hàng cho X:", dấu khử nhập nhằng, ranh giới tên, cờ cách nói mới (mã mới + bộ đọc đã học của v32b). Khác v32b: 35 dòng / 11 cảnh | chưa nộp |
+| `predictions_v33r_refit.json` | như v33 nhưng học lại bộ đọc bằng mã mới: thêm 4 cảnh đổi do các quyết định vai trò sát nút (≈ tung đồng xu). Khác v32b: 56 dòng / 15 cảnh | dự phòng |
+| `predictions_v32b_cv_strong_final.json` (= v32a) | v32a + hai CNN chú giải / giao lộ mới (làm méo mạnh): bản đồ test không đổi | **0,9828** (cao nhất) |
+| `predictions_v32a_nlp_via_e5on.json` | v31c nhưng BẬT LẠI cờ dễ vỡ của e5 + `VIA_FIX` (dấu ";" là ranh giới vế, phủ định / "khỏi" / "chớ", "từ X sang Y"...). Khác v28: 92 dòng / 20 cảnh | (= v32b) |
+| `predictions_v31c_items_spatial_e5frag.json` | v30 + tắt cờ dễ vỡ do riêng e5 bật + "bên tay phải" / "mé" + sửa hồi quy "giao là X ở", "đến tận X" (khác v28: 64 dòng / 50 cảnh, 44 dòng của robot 7) | **0,9733** (tắt cờ e5 là sai) |
+| `predictions_v30_typing_items.json` | v28 + đoán loại tên mới + món hàng (khác v28: 37 dòng / 11 cảnh; có hồi quy nhỏ đã sửa ở v31) | không nộp |
+| `predictions_v29_fragile_ambiguity.json` | v28 + cờ dễ vỡ theo ngữ cảnh ("cẩn thận kẻo trễ") — trùng v28 trên test | không nộp |
+| `predictions_v28_appositive.json` (= v27c = v27 trên test) | v26 + khung nhãn thứ tự cho mọi vai trò, "A trước, B sau", "đến X lấy" (trừ khi người nhận tự tới), đồng vị ngữ "X, nơi…" (khác v26 ở 2 cảnh test) | **0,9778** |
+| `predictions_v26_order_frames.json` | v23 + lỗi gõ theo cặp từ / dấu, câu tương phản, gây nhiễu mới, thứ tự hai chặng (khác v23 ở 2 cảnh test) | chưa nộp |
+| `predictions_v23_typing_knn_desc_more2.json` (= v24 = v25 trên test) | v22 + đoán loại tên mới (láng giềng + mô tả + CTX 0,8) + kho tên 750 mục | chưa nộp |
+| `predictions_v22_nlp_newframes_edgestrong.json` | v19 + NLP khung câu mới / lỗi gõ chữ then chốt + CNN đoạn đường làm méo mạnh + sửa CV lượt 2 | chưa nộp |
+| `predictions_v21_nlp_frames_knowledge.json` | v19 + NLP dò tên lạ theo khung câu + ~350 cách gọi viết tay | chưa nộp |
+| `predictions_v19_cnn_cv_typo.json` | 4 CNN cho CV + sửa lỗi gõ NLP; train và validation 1,0000 | **0,9778** |
 | `predictions_v4_e5_cnn.json` | v3a + CNN nhỏ đọc nhãn địa điểm (ghép với MLP); validation "CV + mission đúng" 0,9887 → 0,9917 | chưa nộp |
 | `predictions_v3a_e5_negation.json` | thêm mô hình nghĩa pretrained e5 cho tên gọi lạ và câu gấp / dễ vỡ; thời tiết chỉ lấy từ biểu tượng | chưa nộp |
 | `predictions_v3b_no_generic_negation.json` | như v3a nhưng tắt luật "từ phủ định chung" | chưa nộp |
@@ -121,7 +144,8 @@ Lưu ý: muốn chạy lại một bước sau khi sửa code thì xóa file cac
 (`det_*.pkl` = kết quả bộ dò, `world_*.pkl` = world cuối, `nlp2_*.pkl` = mission đã đọc) và `outputs/nlp2_final.pkl`
 (mô hình NLP cuối). `run_cv.py` luôn tính lại `world_*.pkl` nhưng dùng lại `det_*.pkl` nếu có.
 
-File nộp: `outputs/predictions.json` (bản mới nhất, giống `predictions_v19_cnn_cv_typo.json`; các bước huấn luyện CNN ở CAP_NHAT_06-10.md). Bản cũ để so sánh trên bảng xếp hạng nếu muốn:
+File nộp: `outputs/predictions.json` (bản mới nhất, giống `predictions_v22_nlp_newframes_edgestrong.json`; tạo lại bằng
+`bash scratch/make_v22.sh <tên_bản>`; các bước huấn luyện CNN ở CAP_NHAT_06-10.md). Bản cũ để so sánh trên bảng xếp hạng nếu muốn:
 `outputs/cac_ban_nop_cu/predictions_v1_nlp_lexicon_only.json` (NLP bản đầu, chỉ nhận tên gọi đã có trong từ điển).
 
 ## Cấu trúc thư mục

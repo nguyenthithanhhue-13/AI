@@ -41,6 +41,23 @@ if "--phrases" in sys.argv:
     has = [set(ss) & set(keys) for ss in sents]
     print(f"{len(scenes)} cảnh, {len(keys)} câu con gấp / dễ vỡ chia 5 nhóm")
     aliases = keys
+elif "--templates" in sys.argv:
+    # giấu KHUNG CÂU: câu con có nhắc địa điểm, thay mọi tên gọi bằng "X" -> khung; khung gặp >= 3 lần chia 5 nhóm.
+    # Lượt k bỏ khỏi dữ liệu học mọi câu có khung thuộc nhóm k -> đo cách đọc vai trò với cách diễn đạt chưa gặp.
+    from nlp import sentences
+    allp = re.compile(r"(?<![a-z])(" + "|".join(sorted(map(re.escape, lex), key=len, reverse=True)) + r")(?![a-z])")
+    skel = lambda x: re.sub(r"\d+", "9", allp.sub("X", x))
+    sents = [{skel(x) for x in sentences(m["text"]) if allp.search(x)} for m in missions]
+    from collections import Counter
+    tab = Counter(s for ss in sents for s in ss)
+    maxc = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--maxc=")), 10 ** 9))
+    keys = sorted(x for x, c in tab.items() if 3 <= c <= maxc)
+    group = {a: int(g) for a, g in zip(keys, rng.permutation(len(keys)) % 5)}
+    has = [ss & set(keys) for ss in sents]
+    print(f"{len(scenes)} cảnh, {len(tab)} khung câu, {len(keys)} khung gặp 3..{maxc} lần chia 5 nhóm; "
+          f"{sum(map(bool, has))} cảnh có ít nhất một khung được chia")
+    for x, c in tab.most_common(12): print(f"   {c:5d}  {x}")
+    aliases = keys
 else:
     group = {a: int(g) for a, g in zip(aliases, rng.permutation(len(aliases)) % 5)}
     has = [{a for a in aliases if pats[a].search(norm(m["text"]))} for m in missions]

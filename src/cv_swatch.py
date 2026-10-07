@@ -62,6 +62,7 @@ def main(mode, epochs=12):
     torch.manual_seed(0); np.random.seed(0)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     d = np.load(CACHE / "cvdata_train.npz"); X, Y = d["sw_x"], d["sw_y"]
+    X, Y = with_strong(X, Y, "sw")
     dv = np.load(CACHE / "cvdata_validation.npz"); Xv, Yv = dv["sw_x"], dv["sw_y"]
     if mode == "final":
         X, Y = np.concatenate([X, Xv]), np.concatenate([Y, Yv])
@@ -102,6 +103,8 @@ def main(mode, epochs=12):
         perm = torch.randperm(len(X))
         for i in range(0, len(X), bs):
             idx = perm[i:i + bs]
+            if len(idx) < 32:
+                continue          # lô cuối quá nhỏ: BatchNorm trên vài mẫu làm gradient nhảy vọt (xem cv_edge.py)
             xb = Xg[idx].to(dev); yb = Yg[idx].to(dev)
             a, b, c = parts(xb)
             g = 1 + 0.12 * (torch.rand(len(a), 1, 1, 1, device=dev) - 0.5)       # đổi độ sáng / tương phản nhẹ

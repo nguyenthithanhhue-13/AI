@@ -227,3 +227,132 @@ PHRASES_MORE = {
         "chúc một ngày vui", "hẹn gặp sau", "vậy thôi nhé", "thế thôi", "hết rồi", "chỉ vậy thôi", "ok nhé", "được rồi đó", "tốt lắm",
         "trời hôm nay đẹp", "hôm nay đông người quá", "đường hơi đông", "nhớ đi đúng đường", "nhớ tuân thủ luật giao thông"],
 }
+
+# câu MÔ TẢ từng loại địa điểm (kiến thức chung, không lấy từ test): mô hình nghĩa e5 so một tên gọi lạ với các câu này
+# ("không cần học"), bổ sung cho n-gram ký tự / hồi quy trên tên đã biết. Dùng khi nlp2.DESC_W > 0.
+TYPE_DESC = {
+    "library": ["thư viện, nơi mượn và đọc sách, tài liệu, giáo trình", "nơi tự học yên tĩnh có nhiều sách báo"],
+    "dorm": ["ký túc xá, nơi sinh viên ở và ngủ nghỉ", "khu nhà ở nội trú của sinh viên"],
+    "sports": ["nơi chơi thể thao, tập luyện thể dục thể thao", "sân bóng, nhà thi đấu, phòng tập gym"],
+    "clinic": ["trạm y tế, nơi khám chữa bệnh có bác sĩ, y tá và thuốc", "phòng khám, nơi sơ cứu người bị ốm"],
+    "canteen": ["căng tin, nhà ăn, nơi ăn uống và bán đồ ăn thức uống", "bếp ăn tập thể phục vụ bữa ăn"],
+    "parking": ["bãi đỗ xe, nơi gửi và giữ xe máy, xe đạp, ô tô", "nhà để xe có người trông xe"],
+    "lecture": ["giảng đường, phòng học nơi sinh viên nghe giảng lý thuyết", "lớp học, hội trường để dạy học và thi"],
+    "lab": ["phòng thí nghiệm, nơi làm thí nghiệm, thực hành và nghiên cứu khoa học", "xưởng thực hành kỹ thuật, chế tạo"],
+    "office": ["văn phòng hành chính, nơi làm thủ tục giấy tờ, hồ sơ, tài chính", "phòng ban quản lý của nhà trường"],
+    "gate": ["cổng trường, lối ra vào có bảo vệ trực", "nơi đón tiếp khách đến trường"],
+}
+# đợt 13 (06/10 chiều): mô tả mở rộng, 8 câu / loại (hoạt động, người làm việc, đồ vật) — kiến thức chung, không lấy từ test.
+# Dùng khi nlp2.DESC_MORE = True.
+TYPE_DESC2 = {
+    "library": ["thư viện trường, nơi mượn, trả và đọc sách, giáo trình, tài liệu tham khảo",
+                "phòng đọc yên tĩnh để tự học, ôn bài, tra cứu tài liệu", "kho sách, kho tài liệu, nơi lưu trữ sách báo, luận văn, tạp chí",
+                "thủ thư, người quản lý sách và cho mượn sách", "trung tâm học liệu, thông tin tư liệu của trường",
+                "nơi đọc báo, xem tạp chí, tìm tài liệu", "quầy mượn trả sách, thẻ thư viện", "góc đọc sách, tủ sách, kệ sách"],
+    "dorm": ["ký túc xá, khu nội trú nơi sinh viên ở lại trường", "nhà ở sinh viên, phòng ở tập thể, nơi ngủ nghỉ ban đêm",
+             "khu lưu trú cho sinh viên xa nhà, tân sinh viên", "phòng ngủ, giường tầng, chăn gối, đồ giặt",
+             "quản lý ký túc xá, bạn cùng phòng, sinh viên nội trú", "dãy nhà ở, tòa nhà ở của sinh viên",
+             "nơi sinh viên sinh hoạt, nghỉ ngơi sau giờ học", "chỗ ở, nơi trọ trong khuôn viên trường"],
+    "sports": ["nhà thi đấu, sân thể thao, nơi chơi bóng đá, bóng rổ, bóng chuyền, cầu lông",
+               "phòng tập gym, thể hình, yoga, võ, nhảy, aerobic", "sân vận động, đường chạy bộ, sân điền kinh", "bể bơi, nơi học bơi",
+               "giáo viên thể dục, huấn luyện viên, đội bóng, câu lạc bộ thể thao",
+               "nơi tập thể dục, rèn luyện thể chất, giờ học thể chất", "dụng cụ thể thao, quả bóng, vợt, đá cầu",
+               "khu vận động, sân tập luyện ngoài trời"],
+    "clinic": ["trạm y tế trường, phòng khám chữa bệnh cho sinh viên", "bác sĩ, y tá, điều dưỡng, nhân viên y tế",
+               "nơi sơ cứu, cấp cứu khi bị thương, băng bó vết thương", "nơi lấy thuốc, phát thuốc, tiêm phòng, tiêm vắc xin",
+               "đo nhiệt độ, huyết áp, kiểm tra sức khỏe, khám tổng quát", "phòng nghỉ cho người ốm, mệt, sốt",
+               "phòng y tế, bệnh xá, trạm xá", "tư vấn sức khỏe, chăm sóc y tế"],
+    "canteen": ["căng tin, nhà ăn sinh viên, nơi ăn sáng, ăn trưa, ăn tối", "quầy bán cơm, đồ ăn, thức uống, nước giải khát, bánh mì",
+                "bếp ăn tập thể, nhà bếp, đầu bếp, người nấu ăn", "khu ẩm thực, quán ăn, quán nước trong trường",
+                "suất ăn, khay cơm, phục vụ bữa ăn", "nhân viên bán hàng ăn, cô bán cơm", "phòng ăn chung, bàn ăn",
+                "nơi mua đồ ăn vặt, cà phê, trà sữa"],
+    "parking": ["bãi xe, nhà xe, nơi gửi và giữ xe máy, xe đạp, ô tô", "người trông xe, bác giữ xe, vé gửi xe",
+                "bãi đỗ xe, khu đậu xe, hầm để xe", "chỗ dựng xe, nơi cất xe của sinh viên và nhân viên", "bãi đỗ ô tô cho khách",
+                "khu để xe đạp, xe máy điện", "nơi lấy xe, gửi xe", "tầng hầm để xe"],
+    "lecture": ["giảng đường, hội trường lớn nơi sinh viên nghe giảng", "phòng học, lớp học lý thuyết, phòng học nhóm",
+                "giảng viên, giáo viên, cô giáo chủ nhiệm đang đứng lớp giảng bài", "nơi thi giữa kỳ, cuối kỳ, kiểm tra",
+                "tòa nhà học, dãy phòng học, khu giảng dạy", "lớp trưởng, buổi học, tiết học, môn học",
+                "phòng chiếu bài giảng, máy chiếu, bảng", "nơi học chuyên đề, seminar, báo cáo"],
+    "lab": ["phòng thí nghiệm hóa, lý, sinh, vi sinh", "nơi làm thí nghiệm, pha hóa chất, ống nghiệm, kính hiển vi",
+            "xưởng thực hành, xưởng cơ khí, chế tạo, robot", "phòng thực hành máy tính, điện, điện tử",
+            "nhóm nghiên cứu, nghiên cứu viên, kỹ thuật viên", "trung tâm nghiên cứu khoa học, viện nghiên cứu",
+            "nơi đo đạc, phân tích mẫu, mẫu vật", "phòng lab, phòng thực nghiệm"],
+    "office": ["phòng hành chính, văn phòng trường, ban giám hiệu",
+               "nơi làm thủ tục, giấy tờ, hồ sơ, đơn từ, giấy xác nhận, giấy giới thiệu",
+               "phòng đào tạo, giáo vụ, công tác sinh viên, tuyển sinh, khảo thí", "phòng tài chính, kế toán, tài vụ, nơi nộp học phí",
+               "văn thư, thư ký, chuyên viên, cán bộ phòng ban", "nơi đóng dấu, ký duyệt giấy tờ",
+               "bộ phận một cửa tiếp nhận hồ sơ sinh viên", "văn phòng khoa, văn phòng đoàn"],
+    "gate": ["cổng trường, cổng chính, cổng phụ, lối ra vào", "bảo vệ, chốt gác, phòng trực bảo vệ",
+             "nơi đón tiếp khách, người thân đến trường", "lối vào, lối ra, cửa ngõ của trường", "nơi kiểm soát xe và người ra vào",
+             "trạm gác, barie, nơi soát vé", "nơi gặp khách bên ngoài", "cổng sau, cổng phía trước"],
+}
+
+
+# đợt 2 (06/10): biến thể chính tả, viết tắt, từ mượn, dạng mô tả, người làm việc — kiến thức chung, không lấy từ test.
+# Bỏ các tên mơ hồ giữa hai loại. Gộp vào PLACES_MORE ngay khi nạp mô-đun.
+PLACES_MORE2 = {
+    "library": ["thư viện số", "thư viện mở", "phòng đọc mở", "phòng mượn sách", "quầy mượn giáo trình", "chỗ mượn giáo trình",
+                "nơi mượn giáo trình", "kho lưu trữ tài liệu", "phòng tra cứu", "khu đọc báo", "phòng đọc điện tử", "góc thư viện",
+                "trung tâm thông tin tư liệu", "phòng sách tham khảo", "nơi trả giáo trình", "quầy trả giáo trình", "thư quán",
+                "phòng tư liệu khoa", "kho sách báo", "nơi đọc báo", "nhân viên quầy mượn sách", "thủ thư trực",
+                "cán bộ quản lý sách", "nơi tìm tài liệu", "phòng đọc sinh viên"],
+    "dorm": ["kí túc xá", "khu kí túc xá", "nhà trọ sinh viên", "nhà lưu trú", "khu lưu trú sinh viên", "nơi ngủ của sinh viên", "nhà ở tập thể sinh viên", "tòa nhà ký túc",
+             "ban tự quản phòng", "cô quản lý khu nội trú", "dãy nhà nội trú", "phòng ở của sinh viên"],
+    "sports": ["sân futsal", "sân bóng mini", "sân bóng nhân tạo", "phòng yoga", "phòng aerobic", "phòng múa",
+               "câu lạc bộ thể hình", "khu tập gym", "phòng gym trường", "sân bóng chuyền hơi", "sân cầu", "nhà thể dục",
+               "khu thể thao đa năng", "sân pickleball", "sân bóng ném", "bể bơi bốn mùa", "đường chạy bộ",
+               "sân điền kinh trường", "thầy giáo thể dục", "đội tuyển bóng chuyền", "câu lạc bộ cầu lông", "khu vận động",
+               "nơi chơi bóng", "nơi tập thể hình"],
+    "clinic": ["phòng y tế học đường", "phòng khám nội", "phòng khám đa khoa trường", "phòng tư vấn sức khỏe", "cơ sở y tế trường",
+               "phòng y", "phòng sơ cấp cứu", "trạm sơ cứu", "quầy y tế", "phòng chăm sóc y tế", "khu y tế trường", "nhà thuốc",
+               "quầy dược", "phòng khám răng", "bác sĩ trường học", "nhân viên trạm y tế", "chị y tá", "điều dưỡng viên",
+               "nơi lấy thuốc", "chỗ khám bệnh"],
+    "canteen": ["căn-tin", "cantin", "căng tin sinh viên", "nhà ăn chính", "khu bán đồ ăn", "quầy bánh mì", "quầy cơm trưa",
+                "quán ăn trong trường", "khu ăn trưa", "nơi ăn sáng", "bếp ăn trường", "quầy phở", "quầy nước giải khát",
+                "quán trà sữa", "căng tin khu", "cô bán căng tin", "anh phục vụ nhà ăn", "nhân viên bán cơm", "nơi bán cơm",
+                "chỗ ăn uống"],
+    "parking": ["bãi để xe máy", "nhà gửi xe", "khu giữ xe", "chỗ dựng xe", "bãi xe sinh viên", "bãi xe giáo viên",
+                "hầm để xe máy", "nhà xe giáo viên", "khu để xe đạp", "bãi gửi xe máy", "điểm gửi xe", "trạm xe đạp",
+                "chỗ để ô tô", "bãi đậu ô tô", "người giữ xe", "bác trông xe", "nhân viên bãi xe", "nơi dựng xe",
+                "hầm gửi xe máy", "khu đậu xe máy"],
+    "lecture": ["phòng học đa năng", "khu giảng dạy", "giảng đường A", "giảng đường B", "phòng học số một", "lớp học lý thuyết",
+                "phòng học chung lớn", "phòng học trực tuyến", "phòng thi chung", "phòng chiếu", "hội trường nhỏ",
+                "phòng học tầng ba", "khu lớp học chính", "dãy giảng đường", "nhà học A", "tòa nhà giảng đường",
+                "giảng viên bộ môn", "thầy chủ nhiệm", "cô chủ nhiệm", "ban cán sự lớp", "nơi dạy học", "chỗ lên lớp"],
+    "lab": ["phòng thí nghiệm hóa sinh", "phòng thực tập", "xưởng thực tập kỹ thuật", "phòng mô phỏng", "phòng CAD",
+            "phòng thí nghiệm môi trường", "phòng thí nghiệm vật liệu", "phòng thực hành hóa", "phòng thực hành sinh",
+            "phòng nghiên cứu robot", "lab AI", "lab trí tuệ nhân tạo", "xưởng điện tử", "xưởng in 3D", "phòng sạch",
+            "kỹ thuật viên thí nghiệm", "người trực phòng thí nghiệm", "thầy phụ trách thực hành", "nơi làm thực hành",
+            "chỗ làm thí nghiệm"],
+    "office": ["phòng CTSV", "phòng công tác chính trị", "phòng quản lý sinh viên", "phòng đào tạo đại học",
+               "phòng khảo thí và đảm bảo chất lượng", "văn phòng đoàn", "đoàn trường", "hội sinh viên", "văn phòng hội sinh viên",
+               "phòng tổ chức cán bộ", "phòng kế hoạch", "phòng truyền thông", "phòng thu học phí", "quầy thu ngân",
+               "phòng tài chính kế toán", "chuyên viên phòng đào tạo", "cô thư ký khoa", "chị văn phòng khoa",
+               "thầy hiệu trưởng", "cô hiệu phó", "nơi đóng học phí", "chỗ làm giấy tờ",
+               "khu hiệu bộ", "khu điều hành", "thư ký trường", "thư ký văn phòng"],
+    "gate": ["cổng số 1", "cổng số 2", "cổng phụ phía sau", "cổng chính của trường", "cổng ra vào chính", "lối vào phụ",
+             "cửa ra vào chính", "chòi bảo vệ", "trạm kiểm soát", "chốt kiểm soát ra vào", "barie", "quầy đón tiếp",
+             "khu tiếp khách ở cổng", "nhân viên bảo vệ cổng", "chú bảo vệ cổng", "anh lễ tân", "đội bảo vệ trường",
+             "nơi khách chờ", "chỗ đón khách"],
+}
+
+# đợt 17 (07/10): tên kiểu MÔ TẢ CHỨC NĂNG ("nơi / chỗ / góc / phòng + việc làm ở đó") và cách gọi đời thường — kiến thức
+# chung, viết mới (không lấy từ test, đã bỏ mọi tên trùng bộ thử scratch/h31 để phép thử h31 / h48 vẫn là đo độc lập).
+PLACES_MORE3 = {
+    "library": ["chỗ đọc sách yên tĩnh", "chỗ tìm sách", "góc sách tham khảo", "phòng đọc báo chí", "nơi học nhóm im lặng", "phòng mượn trả sách", "quầy thủ thư", "nơi gửi trả sách", "khu tự học yên tĩnh", "phòng tài liệu điện tử", "nơi đọc luận văn", "kho luận văn", "phòng đọc tự chọn", "tủ sách chung", "nơi in tài liệu thư viện", "phòng đọc sách báo"],
+    "dorm": ["khu ở nội trú", "nhà ở học viên", "khu tập thể sinh viên", "dãy phòng ngủ", "khu phòng trọ trong trường", "chỗ ở tập thể", "căn hộ sinh viên", "khu ở của học viên", "dãy phòng nội trú nam", "dãy phòng nội trú nữ"],
+    "sports": ["chỗ chơi bóng", "khu chơi thể thao", "nơi tập võ", "sân quần vợt", "sân tennis", "chỗ tập chạy", "khu rèn luyện thể chất", "nơi học thể dục", "phòng bóng bàn", "nơi chơi cầu lông", "hồ bơi trường", "nơi thi đấu thể thao"],
+    "clinic": ["nơi khám sức khỏe", "chỗ sơ cứu", "nơi phát thuốc", "phòng khám sức khỏe", "nơi tiêm chủng", "phòng nghỉ bệnh", "giường bệnh", "phòng bác sĩ", "phòng y sĩ", "phòng khám mắt", "nơi tư vấn sức khỏe", "phòng hồi sức", "chỗ nằm nghỉ khi ốm", "quầy phát thuốc"],
+    "canteen": ["nơi ăn cơm", "quầy đồ ăn", "nơi mua đồ ăn", "quầy cà phê", "quán cà phê trường", "chỗ uống nước", "quầy giải khát", "nơi bán đồ uống", "khu ăn uống", "nhà ăn tập thể", "quầy bán bánh", "bếp ăn tập thể", "quầy suất ăn", "khu food court", "quầy ăn vặt", "nơi phục vụ bữa trưa"],
+    "parking": ["chỗ gửi xe máy", "chỗ đỗ ô tô", "bến đỗ xe", "nơi trông xe", "khu xe điện", "trạm sạc xe điện", "chỗ đỗ xe giáo viên", "bãi xe khách", "nơi đỗ xe buýt", "điểm đỗ xe"],
+    "lecture": ["chỗ học lý thuyết", "phòng học chuyên đề", "phòng seminar", "phòng hội thảo", "nơi thi học kỳ", "phòng học tiếng anh", "phòng học ngoại ngữ", "khu nhà học", "tòa học", "phòng học máy chiếu", "nơi học tập trung", "phòng học trên tầng"],
+    "lab": ["chỗ thực hành", "phòng thực nghiệm", "nơi phân tích mẫu", "phòng thực hành điện", "xưởng thực hành", "phòng đo lường", "phòng kiểm nghiệm", "nơi pha chế hóa chất", "phòng nuôi cấy", "phòng thực hành vật lý", "phòng thử nghiệm"],
+    "office": ["chỗ nộp hồ sơ", "bộ phận một cửa", "phòng văn thư", "phòng tiếp nhận hồ sơ", "phòng tuyển sinh", "phòng hợp tác quốc tế", "phòng thanh tra", "phòng hiệu trưởng", "nơi đăng ký học phần", "phòng hỗ trợ người học", "trung tâm hỗ trợ sinh viên"],
+    "gate": ["cổng vào", "cổng bên hông", "cổng hông", "chốt bảo vệ", "nơi bảo vệ trực", "cổng đón khách", "cổng lớn", "cổng nhỏ", "nơi kiểm tra ra vào"],
+}
+
+import os as _os
+for _t, _v in (PLACES_MORE3.items() if _os.environ.get("NO_MORE3") != "1" else []):
+    PLACES_MORE2[_t] = PLACES_MORE2[_t] + [x for x in _v if x not in PLACES_MORE2[_t]]
+for _t, _v in (PLACES_MORE2.items() if _os.environ.get("NO_MORE2") != "1" else []):
+    PLACES_MORE[_t] = PLACES_MORE[_t] + [x for x in _v if x not in PLACES_MORE[_t] and x not in PLACES[_t]]
