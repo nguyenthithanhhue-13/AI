@@ -115,7 +115,7 @@ DIR_MOST = [
     # "cao nhất / thấp nhất (trên bản đồ)"
     r"\b(cao|thap) nhat\b" + NOT_NHAT,
     # "sát mép trái nhất", "ở rìa phải nhất", "mép trên nhất", "góc trên nhất", "bên trái nhất", "phía trên nhất"
-    r"\b(?:mep|ria|bia|goc|canh|ben|phia|phan) (trai|phai|tren|duoi|rai|hai|ren) nhat\b" + NOT_NHAT,
+    r"\b(?:mep|ria|bia|goc|canh|ben|phia|phan|bien|man) (trai|phai|tren|duoi|rai|hai|ren) nhat\b" + NOT_NHAT,
     r"\b(trai|phai) nhat\b" + NOT_NHAT,
 ]
 DIRMAP = {"bac": "north_most", "tren": "north_most", "ren": "north_most", "ten": "north_most", "cao": "north_most",
@@ -123,8 +123,8 @@ DIRMAP = {"bac": "north_most", "tren": "north_most", "ren": "north_most", "ten":
           "tay": "west_most", "trai": "west_most", "tari": "west_most", "rai": "west_most",
           "dong": "east_most", "phai": "east_most", "hai": "east_most"}
 # dài trước ngắn (luân phiên regex lấy nhánh đầu tiên khớp)
-PROX = r"(?:sat ben|ke ben|ngay canh|ngay sat|sat vach|ke can|lien ke|sat canh|gan ben|lan can|gan voi|canh voi|sat voi|gan|canh|sat|ke)"
-ANC_BAD = r"(?:hon|nua|qua|mep|ria|bia|goc|ben|phia|phan|huong)\b"
+PROX = r"(?:sat ben|ke ben|ngay canh|ngay sat|sat vach|lien ke|sat canh|gan ben|lan can|gan voi|canh voi|sat voi|gan|canh|sat|ke)"
+ANC_BAD = r"(?:hon|nua|qua|mep|ria|bia|goc|ben|phia|phan|huong|bien|man|gan|sat|nhat)\b"
 
 
 def find(text, vocab=None):
@@ -209,7 +209,146 @@ def find(text, vocab=None):
             while h > 0 and toks[h - 1] in ("nam", "o", "tai", "ngay") and h > i0 - 2:
                 h -= 1
             return {"kind": "anchor_near", "anchor": anc, "anchor_span": orig(a0, a1), "span": orig(h, j0), "relaxed": True}
+    if GENERIC:
+        g = _generic(toks, raw, keep)
+        if g:
+            i, j, kind, a = g
+            return {"kind": kind, "anchor": " ".join(toks[a[0]:a[1] + 1]) if a else None,
+                    "anchor_span": orig(*a) if a else None, "span": orig(i, tail(j)), "generic": True}
     return None
+
+
+# ---- Lượt 3 (TỔNG QUÁT, chỉ chạy khi hai lượt trên không bắt được gì): theo cấu trúc chứ không theo mẫu câu.
+# Trong MỘT vế câu: dấu so sánh nhất (nhất / cùng sau từ hướng / hơn cả / hơn tất cả / cực / tận) + từ chỉ hướng (có từ dẫn
+# "phía / hướng / mạn / mép / rìa / biên ...") -> cực trị; + từ chỉ độ gần (gần / sát / kề / cạnh / cách ... ngắn / láng giềng)
+# -> gần mốc nhất, mốc = cụm danh từ trước dấu so sánh ("gần X nhất") hoặc sau từ nối ("gần nhất với / so với / tính từ X").
+GENERIC = True
+DIRW = {"bac": "north_most", "nam": "south_most", "tay": "west_most", "dong": "east_most", "tren": "north_most",
+        "duoi": "south_most", "trai": "west_most", "phai": "east_most"}
+DIRPRE = {"phia", "huong", "mien", "man", "cuc", "ve", "theo", "tan", "ria", "mep", "bo", "dau", "cuoi", "ben", "phan", "bien",
+          "canh", "goc", "tit", "vung", "khu", "day", "hang", "cot", "le"}
+PROXW = {"gan", "sat", "ke", "canh", "lien", "lang", "cach", "ngan", "giap", "ngay"}
+NOT_ANC = {"dia", "diem", "noi", "cho", "vi", "tri", "khu", "vuc", "o", "nam", "gan", "sat", "ke", "canh", "ben", "lien",
+           "lang", "gieng", "cach", "khoang", "toi", "den", "voi", "so", "tinh", "tu", "cua", "hon", "ca", "tat", "moi",
+           "khac", "it", "buoc", "ngan", "quang", "mot", "ngoai", "tren", "ban", "do", "co", "la", "ma",
+           "dang", "suon", "nach", "vach", "ngay", "xom", "giap", "nhu", "toa", "cong", "trinh", "nha", "can", "doan", "duong",
+           "di", "ve", "phia", "nhat", "ke", "nhung", "va", "thi", "cho"}
+ANC_STOP = {"giup", "nhe", "dang", "truoc", "roi", "xong", "de", "hang", "nho", "lay", "nhan", "cho", "va",
+            "ma", "cam", "giao", "mang", "chuyen", "dua", "nhe", "luon", "ngay", "gap", "nhanh", "di", "nhung"}
+ROUTE = {"duong", "loi", "tuyen", "nhanh", "som"}
+
+
+def _generic(toks, raw, keep):
+    n = len(toks)
+    # ranh giới vế câu theo dấu câu trong câu gốc
+    cut = [False] * n
+    if raw:
+        for k in range(n - 1):
+            if re.search(r"[.,;:!?()\[\]\"]", keep[raw[k][2]:raw[k + 1][1]]):
+                cut[k] = True
+    clauses, a = [], 0
+    for k in range(n):
+        if cut[k] or k == n - 1:
+            clauses.append((a, k)); a = k + 1
+    for c0, c1 in clauses:
+        T = toks[c0:c1 + 1]
+        for k, t in enumerate(T):
+            sup = (t == "nhat" and not (k > 0 and T[k - 1] in ("duy", "thong", "hop", "van", "chac", "sinh"))
+                   and not (k > 1 and T[k - 1] == "dong" and T[k - 2] not in DIRPRE | {"nam", "tri", "o"})
+                   and not (k + 1 < len(T) and T[k + 1] in ("dinh", "quyet", "tri", "loat", "thiet", "thoi", "la"))) or \
+                  (t == "ca" and k > 0 and T[k - 1] in ("hon", "tat")) or (t == "cung" and k > 0 and T[k - 1] in set(DIRW) | {"ngoai", "tan"}) \
+                  or (t in ("tan", "tit") and any(x in DIRW for x in T[k + 1:k + 4]))
+            if not sup:
+                continue
+            lo, hi = max(0, k - 8), min(len(T), k + 7)
+            # ---- hướng
+            best = None
+            for q in range(lo, hi):
+                w = T[q]
+                if w not in DIRW:
+                    continue
+                pre = T[q - 1] if q > 0 else ""
+                nx = T[q + 1] if q + 1 < len(T) else ""
+                if pre in ("ben", "phia") and w == "tay" and nx in ("trai", "phai"):
+                    continue          # "bên tay phải"
+                ok = pre in DIRPRE or (nx in ("nhat", "cung", "xa", "hon") and w in ("bac", "trai", "duoi", "tay", "tren")) \
+                    or (pre == "cuc")
+                if w in ("nam", "dong", "phai", "tren", "tay") and pre not in DIRPRE:
+                    ok = (ok and w in ("tren", "tay") and nx in ("nhat", "cung")) or \
+                        (nx in ("nhat", "cung") and pre in ("nam", "tri", "o", "la", "diem", "cho", "noi"))
+                if ok and (best is None or abs(q - k) < abs(best - k)):
+                    best = q
+            prox = [q for q in range(lo, k) if T[q] in PROXW] + [q for q in range(k + 1, hi) if T[q] in PROXW and q <= k + 1]
+            route = any(T[q] in ROUTE or (T[q] == "trinh" and T[q - 1] == "lo") for q in range(max(0, k - 4), k))
+            if best is not None and not route:
+                q0 = min(best, k)
+                h = _head(T, q0)
+                return c0 + h, c0 + max(best, k), DIRW[T[best]], None
+            itxa = [q for q in range(lo, k) if T[q] == "xa" and q > 0 and T[q - 1] == "it"]       # "ít xa X nhất"
+            farw = any(T[q] == "xa" and not (q > 0 and T[q - 1] in ("it", "tuc")) for q in range(lo, k))   # "xa X nhất": không phải dạng gần
+            if not route and not farw and (prox or itxa):
+                p0 = min(prox + itxa)
+                # mốc trước "nhất": giữa từ gần và "nhất"
+                seg = [q for q in range(p0 + 1, k) if T[q] not in NOT_ANC]
+                if seg:
+                    a0 = seg[0]; a1 = seg[-1]
+                    # kéo về trái nếu tên mốc mở đầu bằng từ chung ("nhà ăn", "khu giảng đường", "phòng y tế", "cổng trường")
+                    while a0 - 1 > p0 and T[a0 - 1] in ("nha", "khu", "toa", "cong", "noi", "phong", "san", "bai", "tram", "day", "can"):
+                        a0 -= 1
+                    h = _head(T, p0)
+                    return c0 + h, c0 + k, "anchor_near", (c0 + a0, c0 + a1)
+                # mốc sau "nhất": "gần nhất với X", "gần nhất so với X", "gần nhất tính từ X", "gần nhất của X", "gần nhất cạnh X"
+                q = k + 1
+                while q < len(T) and T[q] in ("voi", "so", "tinh", "tu", "cua", "canh", "ben", "toi", "den", "ke", "sat", "o", "la"):
+                    q += 1
+                e = q
+                while e < len(T) and e < q + 6 and T[e] not in ANC_STOP:
+                    e += 1
+                if e > q and q > k + 1:
+                    h = _head(T, p0)
+                    return c0 + h, c0 + e - 1, "anchor_near", (c0 + q, c0 + e - 1)
+    # Lượt 4 (KHÔNG CÓ DẤU SO SÁNH NHẤT, "nhất" rơi / gõ hỏng / bị bỏ): đầu ngữ CHUNG đứng liền (qua "nằm / ở / ngay") từ chỉ độ
+    # gần hoặc từ dẫn hướng. Train + validation: 9 / 9 cụm như vậy là "gần mốc nhất" (chữ "nhất" gõ hỏng), 0 cụm nghĩa khác.
+    for c0, c1 in clauses:
+        T = toks[c0:c1 + 1]
+        for h in range(len(T)):
+            hl = 2 if T[h:h + 2] in (["dia", "diem"], ["vi", "tri"], ["khu", "vuc"], ["toa", "nha"], ["cong", "trinh"]) else \
+                1 if T[h] in ("cho", "noi") else 0
+            if not hl or (h > 0 and T[h - 1] in ("dia", "vi", "khu", "toa", "cong")):
+                continue
+            q = h + hl
+            while q < len(T) and T[q] in ("nam", "o", "ngay", "ma", "tai") and q < h + hl + 3:
+                q += 1
+            if q >= len(T):
+                continue
+            if T[q] in ("phia", "huong", "mep", "ria", "bien", "man", "tan", "tit", "cuc") or T[q:q + 2] == ["ve", "phia"]:
+                r = q + (2 if T[q] == "ve" else 1)
+                if r < len(T) and T[r] == "phia":
+                    r += 1
+                if r < len(T) and T[r] in DIRW and not (T[r] == "nam" and r + 1 < len(T) and T[r + 1] in DIRW):
+                    return c0 + h, c0 + r, DIRW[T[r]], None
+            if T[q] in ("gan", "sat", "ke", "canh", "lien", "giap"):
+                a = q + 1
+                while a < len(T) and T[a] in ("ke", "ben", "canh", "voi", "sat", "vach", "nach", "suon"):
+                    a += 1
+                e = a
+                while e < len(T) and e < a + 6 and T[e] not in ANC_STOP and T[e] not in ("hon", "nhat"):
+                    e += 1
+                if e > a and T[a] not in ("mep", "ria", "bien", "phia"):
+                    return c0 + h, c0 + e - 1, "anchor_near", (c0 + a, c0 + e - 1)
+    return None
+
+
+def _head(T, q0):
+    """Đầu ngữ chung gần nhất trước q0 (trong 6 từ), hoặc q0."""
+    for h in range(q0 - 1, max(-1, q0 - 7), -1):
+        if T[h] in ("noi", "cho", "toa", "khu", "phong", "day", "cong") or (T[h] == "diem") or (T[h] == "vi" and h + 1 < len(T) and T[h + 1] == "tri"):
+            if T[h] == "diem" and h > 0 and T[h - 1] == "dia":
+                return h - 1
+            return h
+        if T[h] in ("den", "toi", "giao", "o", "cho", "tai", "la", "ve") and h < q0 - 1:
+            return h + 1
+    return q0
 
 
 RELAX = True

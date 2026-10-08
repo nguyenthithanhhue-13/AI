@@ -10,7 +10,9 @@ sys.path.insert(0, "scratch")
 from p2_lib import *
 
 PL = PLACES
-NF = 4 + 1 + 10 + 4
+import os
+ABSDIR = os.environ.get("ABSDIR") == "1"     # thêm hướng tuyệt đối của bước (lên / xuống / trái / phải)
+NF = 4 + 1 + 10 + 4 + (4 if ABSDIR else 0)
 
 
 def encode(x, legged):
@@ -34,7 +36,7 @@ def encode(x, legged):
                 s = (n[0] * 9 + n[1]) * 4 + h
                 nxt[s, d] = (n2[0] * 9 + n2[1]) * 4 + d
                 rel = REL[h][d]
-                E[s, d] = base + [rel == "S", rel == "R", rel == "L", rel == "B"]
+                E[s, d] = base + [rel == "S", rel == "R", rel == "L", rel == "B"] + ([d == 0, d == 1, d == 2, d == 3] if ABSDIR else [])
     return nxt, E
 
 
@@ -45,9 +47,29 @@ def cond(x):
                     [m["goal"] == t for t in PL] + [m["via"] == t for t in PL], np.float32)
 
 
+ROT_D = [3, 2, 0, 1]      # xoay 90° theo chiều kim đồng hồ: LÊN->PHẢI, XUỐNG->TRÁI, TRÁI->LÊN, PHẢI->XUỐNG
+
+
+def rotate(x, k):
+    """Xoay cả cảnh k lần 90° (chiều kim đồng hồ). Rẽ phải / trái / quay đầu giữ nguyên nghĩa; nhãn xoay theo."""
+    if k == 0:
+        return x
+    w = x["w"]; R = 9
+    def P(p):
+        return (p[1], R - 1 - p[0])
+    adj = {P(n): {ROT_D[d]: info for d, info in dd.items()} for n, dd in w["adj"].items()}
+    w2 = dict(w, adj=adj, landmarks={t: [P(p) for p in v] for t, v in w["landmarks"].items()}, robot=P(w["robot"]),
+              heading=ROT_D[w["heading"]])
+    x2 = dict(x, w=w2, legs=[[P(p) for p in L] for L in x["legs"]], y=[ROT_D[v] for v in x["y"]])
+    return rotate(x2, k - 1)
+
+
 if __name__ == "__main__":
     split = sys.argv[1]
     D = load(split)
+    if len(sys.argv) > 2 and sys.argv[2] == "aug":
+        D = [rotate(x, k) for x in D for k in range(4)]
+        split = split + "_aug"
     N = len(D)
     NX = np.zeros((N, 325, 4), np.int16); NXL = np.zeros((N, 325, 4), np.int16)
     EE = np.zeros((N, 325, 4, NF), np.uint8); EL = np.zeros((N, 325, 4, NF), np.uint8)
@@ -63,5 +85,5 @@ if __name__ == "__main__":
         rb = x["w"]["robot"]
         ST[i] = (rb[0] * 9 + rb[1]) * 4 + x["w"]["heading"]
         C[i] = cond(x); Y[i] = x["y"]
-    np.savez_compressed(f"cache/p2_vin_{split}.npz", nxt=NX, nxtl=NXL, E=EE, EL=EL, goal=G, via=V, start=ST, C=C, y=Y)
+    np.savez_compressed(f"cache/p2_vin_{'abs_' if ABSDIR else ''}{split}.npz", nxt=NX, nxtl=NXL, E=EE, EL=EL, goal=G, via=V, start=ST, C=C, y=Y)
     print(split, N, "xong")

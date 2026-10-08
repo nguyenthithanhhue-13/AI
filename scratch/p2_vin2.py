@@ -19,7 +19,10 @@ def load(split):
                 C=torch.tensor(z["C"]), y=torch.tensor(z["y"][:, r].astype(np.int64)))
 
 
-TR = load("train"); VA = load("validation")
+import os
+VPRE = os.environ.get("VPRE", "")
+TR = load(VPRE + os.environ.get("VTRAIN", "train")); VA = load(VPRE + "validation")
+VA_AUG = os.environ.get("VTRAIN", "train").endswith("_aug")
 NF = TR["E"].shape[-1]; NC = TR["C"].shape[-1]
 
 
@@ -104,7 +107,8 @@ def ens_eval(nets, D):
 
 
 t0 = time.time()
-DATA = {k: torch.cat([TR[k], VA[k]]) for k in TR} if FINAL else TR
+VAF = load(VPRE + "validation_aug") if (FINAL and VA_AUG) else VA
+DATA = {k: torch.cat([TR[k], VAF[k]]) for k in TR} if FINAL else TR
 nets = [train_one(s, DATA) for s in range(SEEDS)]
 for i, n in enumerate(nets):
     torch.save(n.state_dict(), f"cache/p2_vin2{TAG}_r{r}_s{i}{'_final' if FINAL else ''}.pt")
