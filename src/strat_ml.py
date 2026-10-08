@@ -298,12 +298,49 @@ class StrategyML:
         A = [d for d, v in sc.items() if v <= mn + 1e-9]
         return min(A, key=lambda d: o.index(REL[h][d]))
 
+    @staticmethod
+    def _greedy2_move(w, legs, cfg, night, urgent, fragile):
+        """Robot 9 (scratch/p2_greedy_exact_fix.py): điểm bước = khoảng cách từ giao lộ kế tới điểm đến gần nhất (Manhattan khi
+        gấp, Euclid lưới khi không gấp — theo tham số nhóm) + a*đông + c*mái che + b*vào địa điểm + bt[loại] + phạt rẽ R/L/B;
+        HÒA -> thứ tự hướng TUYỆT ĐỐI (A0312 = LÊN, PHẢI, XUỐNG, TRÁI). Nhóm: (đêm, gấp, dễ vỡ)."""
+        p = cfg["params"].get(str((int(bool(night)), int(bool(urgent)), int(bool(fragile)))))
+        if p is None or not legs or not legs[0]:
+            return None
+        s = w["robot"]; tg = legs[0]; h = w["heading"]
+        tgs = {q for L in legs for q in L}
+        lmt = {q: PLACE_ORDER.index(t) for t, v in w["landmarks"].items() for q in v if q not in tgs}
+        sc = {}
+        for d, info in w["adj"].get(s, {}).items():
+            if not edge_ok(info, False):
+                continue
+            n2 = (s[0] + DRC[d][0], s[1] + DRC[d][1])
+            if p["dist"] == 0:
+                dist = min(abs(n2[0] - q[0]) + abs(n2[1] - q[1]) for q in tg)
+            else:
+                dist = min(math.hypot(n2[0] - q[0], n2[1] - q[1]) for q in tg)
+            rel = REL[h][d]
+            sc[d] = dist + p["a"] * (info[0] == "crowded") + p["c"] * (info[0] == "covered") + \
+                (p["b"] + p["bt"][lmt[n2]] if n2 in lmt else 0.0) + {"S": 0.0, "R": p["R"], "L": p["L"], "B": p["B"]}[rel]
+        if not sc:
+            return None
+        o = p["order"]
+        if o.startswith("A"):
+            ab = [int(c) for c in o[1:]]
+            return min(sc, key=lambda d: (round(sc[d], 9), ab.index(d)))
+        return min(sc, key=lambda d: (round(sc[d], 9), o.index(REL[h][d])))
+
     def predict_scene(self, w, legs, urgent, fragile, has_via, night=False, mapgoal=False):
         """10 hướng đi cho một cảnh."""
         f = move_feats(w, legs, urgent, fragile, has_via)
         out = []
         for r in range(10):
             cfg = self.hybrid.get(str(r))
+            if cfg and cfg.get("method") == "greedy2":
+                d = self._greedy2_move(w, legs, cfg, night, urgent, fragile)
+                if d is not None:
+                    out.append(int(d))
+                    continue
+                cfg = cfg.get("fallback") or cfg
             if cfg and cfg.get("method") in ("cost", "greedy", "lex", "tree"):
                 fn = {"cost": self._cost_move, "lex": self._lex_move, "tree": self._tree_move,
                       "greedy": lambda *a: self._greedy_move(*a[:2], *a[3:])}[cfg["method"]]
