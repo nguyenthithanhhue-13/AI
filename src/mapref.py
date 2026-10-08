@@ -103,6 +103,11 @@ DIR_MOST = [
     r"\b(?:mep|ria|bia|goc|canh|ben|phia|phan) (trai|phai) cung\b",
     # "sát mép trái bản đồ nhất"
     r"\b(?:mep|ria|bia|canh|ben|phia|phan) (trai|phai|tren|duoi) (?:cua )?ban do nhat\b",
+    # "tít phía bắc", "ở đầu phía bắc", "cuối phía nam", "đỉnh bản đồ" (= trên cùng), "phía bắc hơn tất cả / hơn mọi nơi"
+    r"\btit (?:phia |ve phia |huong |ben )?(bac|nam|tay|dong|tren|duoi|trai|phai)\b",
+    r"\b(?:dau|cuoi) (?:phia|huong|mien) (bac|nam|tay|dong)\b",
+    r"\b(?:phia|huong|ben|mep|ria) (bac|nam|tay|dong|tren|duoi|trai|phai) (?:hon tat ca|hon moi|bac nhat|hon het)\b",
+    r"\b(?:xa|cao|thap) (?:hon tat ca|hon moi noi|bac nhat) (?:ve )?(?:phia |huong )?(bac|nam|tay|dong|tren|duoi|trai|phai)\b",
     # "trên cùng bản đồ", "dưới cùng", "ngoài cùng bên trái", "bên trái cùng"
     r"\b(tren|duoi|ten|ren|dui) cung\b",
     r"\bngoai cung (?:ben |phia |phan |\w{1,4} )?(trai|phai|tren|duoi|tari|rai|hai)\b",
@@ -168,7 +173,7 @@ def find(text, vocab=None):
             if h > 0 and toks[h] == "diem" and toks[h - 1] == "dia":
                 h -= 1
             return {"kind": DIRMAP[m.group(1)], "anchor": None, "anchor_span": None, "span": orig(h, tail(j0))}
-    ANCH = [r"\b" + HEAD + r" " + FILL + PROX + r" ((?:\w+ ){1,7}?)nhat\b" + NOT_NHAT,      # "nơi gần X nhất"
+    ANCH = [r"\b" + HEAD + r" " + FILL + PROX + r" ((?:\w+ ){1,7}?)(?:nhat|hon tat ca|hon moi noi khac|hon moi noi)\b" + NOT_NHAT,
             r"\b" + HEAD + r" " + FILL + r"cach ((?:\w+ ){1,7}?)gan nhat\b",               # "địa điểm cách X gần nhất"
             r"\b" + HEAD + r" " + FILL + PROX + r" ((?:\w+ ){1,7}?)hon ca\b"]               # "nơi gần X hơn cả"
     for pat in ANCH:

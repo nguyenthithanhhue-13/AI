@@ -13,7 +13,8 @@ phá hòa riêng từng robot); nơi giao có thể **chỉ mô tả qua bản �
 | `predictions_p11_goaltype.json` | + **loại nơi giao** là điều kiện ẩn (R2, R3, R7) + luật R0 | 0,867 | **0,8056** |
 | `predictions_p12_tie.json` | + thứ tự phá hòa riêng từng robot (R8 ưu tiên rẽ phải) | 0,871 | chưa nộp |
 | `predictions_p13_ml4.json` | + R5, R7 dùng bộ phân loại "ml4" (đặc trưng bước + đêm + chi phí mô hình lai + loại nơi giao) | 0,876 | chưa nộp |
-| **`predictions_p14_vin.json`** (= `predictions.json`) | + R1, R2, R4, R6 dùng BỘ TÌM ĐƯỜNG CÓ HÀM CHI PHÍ HỌC ĐƯỢC (`src/vin.py`, mạng nhỏ + lặp giá trị, gộp 3 mạng) | **0,884** | chưa nộp |
+| `predictions_p14_vin.json` | + R1, R2, R4, R6 dùng BỘ TÌM ĐƯỜNG CÓ HÀM CHI PHÍ HỌC ĐƯỢC (`src/vin.py`, mạng nhỏ + lặp giá trị, gộp 3 mạng) | 0,884 | chưa nộp |
+| **`predictions_p15_vinbig.json`** (= `predictions.json`) | + mạng lớn (hid 128) cho R1, R4 (gộp với mạng nhỏ), R8; bộ nhận diện mô tả qua bản đồ thêm "tít / đầu phía / hơn tất cả / bậc nhất" (test: 464 -> 487 cảnh nhận ra) | **0,888** | chưa nộp |
 
 Từng robot (p14: R1 0,893 · R2 0,893 · R4 0,867 · R6 0,867; còn lại như p13) (p13, validation, thông tin từ CV + đọc câu): R0 0,957 · R1 0,863 · R2 0,890 · R3 0,847 · R4 0,860 · R5 0,927 ·
 R6 0,820 · R7 0,850 · R8 0,850 · R9 0,893.
