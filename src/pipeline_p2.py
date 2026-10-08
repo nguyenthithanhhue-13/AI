@@ -106,6 +106,9 @@ def predict_split(split, cv_mode, mode):
     st.hybrid = json.loads(hp.read_text(encoding="utf-8")) if hp.exists() else {}
     m4 = OUT / f"strategy_ml4_{mode}.pkl"
     st.ml4 = pickle.load(open(m4, "rb")) if m4.exists() else {}
+    vp = OUT / f"vin_{mode}.npz"
+    import vin
+    st.vin = vin.load(vp) if vp.exists() else {}
     preds = []; stat = Counter()
     for si in range(len(rows) // 10):
         img = rows[si * 10]["image"]; text = rows[si * 10]["mission"]

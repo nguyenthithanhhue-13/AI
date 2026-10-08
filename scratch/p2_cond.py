@@ -37,6 +37,9 @@ SPLITS = {
     "điểm đến kế sách vở": lambda x: (x["m"]["via"] or x["m"]["goal"]) in ("library", "lecture", "office"),
     "điểm đến kế ăn/ở": lambda x: (x["m"]["via"] or x["m"]["goal"]) in ("canteen", "dorm"),
 }
+SPLITS.update({"loại đích (10)": lambda x: x["m"]["goal"], "kiểu vẽ (4)": lambda x: x["s"]["style"],
+               "hướng mũi (4)": lambda x: x["w"]["heading"], "loại ghé (11)": lambda x: str(x["m"]["via"])})
+MULTI = {"loại đích (10)", "kiểu vẽ (4)", "hướng mũi (4)", "loại ghé (11)"}
 ONLY = sys.argv[3].split(",") if len(sys.argv) > 3 else None
 if ONLY:
     SPLITS = {k: v for k, v in SPLITS.items() if k in ONLY or k == "không chia"}
@@ -82,10 +85,12 @@ t0 = time.time()
 TRf = TR[:1600]
 for name, f in SPLITS.items():
     P = {}
-    for v in (False, True):
-        D = [x for x in TRf if bool(f(x)) == v][:NF]
+    keyf = (lambda x: f(x)) if name in MULTI else (lambda x: bool(f(x)))
+    for v in sorted({keyf(x) for x in TRf}, key=str):
+        D = [x for x in TRf if keyf(x) == v][:NF]
         P[v] = fit(D) if D else {k: 0.0 for k in KEYS}
-    ok = sum(pred(x, GVA[id(x)], P[bool(f(x))]) == x["y"][r] for x in VA)
+    P0 = fit(TRf[:NF]) if any(keyf(x) not in P for x in VA) else None
+    ok = sum(pred(x, GVA[id(x)], P.get(keyf(x), P0)) == x["y"][r] for x in VA)
     res.append((ok / len(VA), name, P))
     print(f"R{r} chia theo [{name}]: validation {ok / len(VA):.3f}  ({time.time() - t0:.0f}s)", flush=True)
 res.sort(key=lambda z: -z[0])

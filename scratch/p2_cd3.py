@@ -32,6 +32,8 @@ KF = {"style": lambda x: x["s"]["style"], "weather": lambda x: x["s"]["weather"]
       "gt": lambda x: x["m"]["goal"], "gt_w": lambda x: x["m"]["goal"] + "/" + x["s"]["weather"],
       "gt_nd": lambda x: x["m"]["goal"] + "/" + ("đêm" if x["s"]["style"] == "night" else "ngày"),
       "vt": lambda x: str(x["m"]["via"]),
+      "v_gt": lambda x: "ghé=True" if x["m"]["via"] else "ghé=False/" + x["m"]["goal"],
+      "v_f": lambda x: "ghé=" + str(bool(x["m"]["via"])) + "/dễ vỡ=" + str(x["m"]["fragile"]),
       "tt": lambda x: str(x["m"]["via"] or x["m"]["goal"]),
       "tt_w": lambda x: str(x["m"]["via"] or x["m"]["goal"]) + "/" + x["s"]["weather"],
       "tt_nd": lambda x: str(x["m"]["via"] or x["m"]["goal"]) + "/" + ("đêm" if x["s"]["style"] == "night" else "ngày"),

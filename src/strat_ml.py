@@ -311,6 +311,13 @@ class StrategyML:
                 if d is not None:
                     out.append(int(d))
                     continue
+            if cfg and cfg.get("method") == "vin" and getattr(self, "vin", None) and r in self.vin:
+                # bộ tìm đường có hàm chi phí học được (src/vin.py, scratch/p2_vin2.py)
+                import vin as _vin
+                d = _vin.predict(self.vin, r, w, legs, night, urgent, fragile, mapgoal)
+                if d is not None:
+                    out.append(int(d))
+                    continue
             if cfg and cfg.get("method") == "ml4" and getattr(self, "ml4", None) and r in self.ml4:
                 # bộ phân loại học trên đặc trưng bước + đêm + chi phí mô hình lai + loại nơi giao (scratch/p2_ml4_train.py)
                 rows, valid = ml4_row(w, legs, r, cfg.get("qcfg"), f, night, urgent, fragile)

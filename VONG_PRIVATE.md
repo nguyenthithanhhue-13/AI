@@ -12,9 +12,10 @@ phá hòa riêng từng robot); nơi giao có thể **chỉ mô tả qua bản �
 | `predictions_p6_nlpkb.json` | + kho tên gọi vòng 1 vào từ điển | 0,839 | 0,7583 (kho tên gọi làm hại trên test → bỏ) |
 | `predictions_p11_goaltype.json` | + **loại nơi giao** là điều kiện ẩn (R2, R3, R7) + luật R0 | 0,867 | **0,8056** |
 | `predictions_p12_tie.json` | + thứ tự phá hòa riêng từng robot (R8 ưu tiên rẽ phải) | 0,871 | chưa nộp |
-| **`predictions_p13_ml4.json`** (= `predictions.json`) | + R5, R7 dùng bộ phân loại "ml4" (đặc trưng bước + đêm + chi phí mô hình lai + loại nơi giao) | **0,876** | chưa nộp |
+| `predictions_p13_ml4.json` | + R5, R7 dùng bộ phân loại "ml4" (đặc trưng bước + đêm + chi phí mô hình lai + loại nơi giao) | 0,876 | chưa nộp |
+| **`predictions_p14_vin.json`** (= `predictions.json`) | + R1, R2, R4, R6 dùng BỘ TÌM ĐƯỜNG CÓ HÀM CHI PHÍ HỌC ĐƯỢC (`src/vin.py`, mạng nhỏ + lặp giá trị, gộp 3 mạng) | **0,884** | chưa nộp |
 
-Từng robot (p13, validation, thông tin từ CV + đọc câu): R0 0,957 · R1 0,863 · R2 0,890 · R3 0,847 · R4 0,860 · R5 0,927 ·
+Từng robot (p14: R1 0,893 · R2 0,893 · R4 0,867 · R6 0,867; còn lại như p13) (p13, validation, thông tin từ CV + đọc câu): R0 0,957 · R1 0,863 · R2 0,890 · R3 0,847 · R4 0,860 · R5 0,927 ·
 R6 0,820 · R7 0,850 · R8 0,850 · R9 0,893.
 
 ## Cách chạy lại
@@ -45,6 +46,7 @@ Tham số chiến thuật nằm trong `outputs/strategy_hybrid.json` (chỉ họ
 | `src/strategy.py` | đích chốt theo vị trí (`("pos", (r, c))`) |
 | `src/strat_ml.py` | chiến thuật lai: Dijkstra trên (giao lộ, hướng) với tham số theo nhóm điều kiện; luật thứ tự từ điển cho R0; tham lam cho R9; nhận diện ảnh BAN ĐÊM theo độ sáng |
 | `src/pipeline_p2.py` | ghép CV + NLP + chiến thuật |
+| `src/vin.py` | dự đoán bằng numpy của bộ tìm đường có hàm chi phí học được (huấn luyện: `scratch/p2_vin_data.py`, `scratch/p2_vin2.py`, xuất: `scratch/p2_vin_export.py`) |
 
 ## Phát hiện về chiến thuật (từ nhãn train)
 
