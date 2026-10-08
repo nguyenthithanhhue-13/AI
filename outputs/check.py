@@ -1,6 +1,6 @@
 import json 
-OLD_FILE = "F:\Research\Phenikaa_Campus_Courier_2026\AI\outputs\cac_ban_nop_cu\predictions_v32b_cv_strong_final.json"
-NEW_FILE = "F:\Research\Phenikaa_Campus_Courier_2026\AI\outputs\cac_ban_nop_cu\predictions_v41n_negref_noprep.json"
+OLD_FILE = "F:\Research\Phenikaa_Campus_Courier_2026\AI\outputs\private_result\predictions_p11_goaltype.json"
+NEW_FILE = "F:\Research\Phenikaa_Campus_Courier_2026\AI\outputs\private_result\predictions_p11_goaltype.json"
 
 ROBOTS_PER_MAP = 10 
 with open(OLD_FILE, "r", encoding="utf-8") as f:
@@ -27,4 +27,5 @@ for map_index in range(0, len(old), ROBOTS_PER_MAP):
             changed_robots += 1 
 print(f"Changed maps   : {changed_maps}")
 print(f"Changed robots : {changed_robots}")
-print(f"Difference     : {changed_robots / len(old) * 0.3:.4f}")
+print(f"Difference     : {changed_robots / len(old) * 100:.4f}%")
+print(f"Difference (30%)     : {changed_robots / len(old) * 0.3:.4f}")
