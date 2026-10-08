@@ -9,7 +9,7 @@ sys.argv = [argv0, str(r), "1", "64"]
 g = {}
 exec(open("scratch/p2_vin2.py", encoding="utf-8").read().split("t0 = time.time()")[0], g)
 vnets = []
-for tag in VT:
+for tag in [t for t in VT if t != "none"]:
     g["HID"] = 128 if tag == "big" else 64
     for f in sorted(glob.glob(f"cache/p2_vin2{tag}_r{r}_s[0-9].pt")):
         n = g["Net"]().to(g["dev"]); n.load_state_dict(torch.load(f)); vnets.append(n.eval())
@@ -17,14 +17,17 @@ VA = g["VA"]
 with torch.no_grad():
     lv = []
     for b in g["batches"](VA, 150, False):
-        lv.append(sum(torch.log_softmax(n(b, hard=True), 1) for n in vnets).cpu() / len(vnets))
-    LV = torch.cat(lv).numpy()
+        if vnets:
+            lv.append(sum(torch.log_softmax(n(b, hard=True), 1) for n in vnets).cpu() / len(vnets))
+    LV = torch.cat(lv).numpy() if vnets else None
 yv = VA["y"].numpy()
 # --- siêu tuyến tính (nhiều tag, cách nhau bởi "+": "" = đầy đủ, goal, basic)
 LHs = []
 for ht in HT.split("+"):
     sys.argv = [argv0, str(r)]
-    os.environ["COND"] = {"basic": "basic", "goal": "goal"}.get(ht, "full")
+    SEL = {1: "rain+night+urg", 2: "rain+night+goal", 3: "rain+goal", 4: "rain+urg+frag+goal", 5: "night",
+           6: "night+urg+frag+via+mapg+goal", 7: "rain+night+urg+frag+goal", 8: "night+urg+frag+via+goal"}
+    os.environ["COND"] = SEL[r] if ht == "sel" else {"basic": "basic", "goal": "goal"}.get(ht, "full")
     h = {"__name__": "x"}
     exec(open("scratch/p2_hyper.py", encoding="utf-8").read().split('if __name__ == "__main__":')[0], h)
     HV = h["prep"]("validation")
@@ -38,4 +41,6 @@ for ht in HT.split("+"):
 LH = sum(LHs) / len(LHs)
 assert (HV["y"].numpy() == yv).all()
 acc = lambda L: (L.argmax(1) == yv).mean()
+if LV is None:
+    LV = np.zeros_like(LH)
 print(f"R{r} [{HT}]: vin {acc(LV):.3f} | hyper gộp {acc(LH):.3f} | " + " ".join(f"a={a}: {acc(a * LH + (1 - a) * LV):.3f}" for a in (0.3, 0.5, 0.67, 0.8)))

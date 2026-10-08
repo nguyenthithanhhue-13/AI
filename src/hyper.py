@@ -27,8 +27,24 @@ def _dom(v, front):
     return False
 
 
+_CACHE = {}
+
+
 def fronts(w, legs, legged):
-    """{bước đầu d: (kiểu rẽ so với mũi robot, mảng [k, 19] đặc trưng các đường Pareto)}."""
+    """{bước đầu d: (kiểu rẽ so với mũi robot, mảng [k, 19] đặc trưng các đường Pareto)} — có bộ nhớ đệm theo (bản đồ, chặng,
+    có chân) vì mọi robot không chân / mọi bộ trọng số dùng chung một mặt Pareto."""
+    key = (id(w), tuple(tuple(L) for L in legs), bool(legged))
+    hit = _CACHE.get(key)
+    if hit is not None and hit[0] is w:
+        return hit[1]
+    if len(_CACHE) > 64:
+        _CACHE.clear()
+    out = _fronts(w, legs, legged)
+    _CACHE[key] = (w, out)
+    return out
+
+
+def _fronts(w, legs, legged):
     tg = {p for L in legs for p in L}
     lm = {p for v in w["landmarks"].values() for p in v} - tg
     lmt = {p: PLACES.index(t) for t, v in w["landmarks"].items() for p in v if p not in tg}
@@ -112,6 +128,15 @@ def conditions(mode, w, legs, night, urgent, fragile, mapgoal):
     goal = typ(legs[-1][0]) if legs[-1] else None
     via = typ(legs[0][0]) if len(legs) == 2 and legs[0] else None
     base = [w["rain"], night, urgent, fragile, len(legs) == 2, mapgoal]
+    TOK = ["rain", "night", "urg", "frag", "via", "mapg", "goal", "viat"]
+    if "+" in mode or mode.startswith("g:") or (mode in TOK and mode != "goal"):          # danh sách điều kiện riêng của robot, vd "night+urg+goal"
+        c = []
+        for t in mode.split("+"):
+            if t.startswith("g:"):        # đích thuộc nhóm loại
+                c += [goal in t[2:].split(",")]
+            else:
+                c += [base[TOK.index(t)]] if TOK.index(t) < 6 else [(goal if t == "goal" else via) == q for q in PLACES]
+        return np.array(c, np.float64)
     if mode == "4":
         c = base[:4]
     elif mode == "basic":

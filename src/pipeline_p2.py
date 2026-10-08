@@ -113,7 +113,7 @@ def predict_split(split, cv_mode, mode):
     import hyper
     st.hyper = hyper.load(hy) if hy.exists() else {}
     # các bộ siêu tuyến tính theo bộ điều kiện ("" = đầy đủ, "goal" = cờ + loại nơi giao) để GỘP với vin (method "hv")
-    st.hypers = {t: hyper.load(OUT / f"hyper{t}_{mode}.npz") for t in ("", "goal") if (OUT / f"hyper{t}_{mode}.npz").exists()}
+    st.hypers = {t: hyper.load(OUT / f"hyper{t}_{mode}.npz") for t in ("", "goal", "sel") if (OUT / f"hyper{t}_{mode}.npz").exists()}
     preds = []; stat = Counter()
     for si in range(len(rows) // 10):
         img = rows[si * 10]["image"]; text = rows[si * 10]["mission"]

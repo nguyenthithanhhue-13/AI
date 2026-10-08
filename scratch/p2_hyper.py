@@ -18,10 +18,39 @@ torch.set_num_threads(6)
 COND = os.environ.get("COND", "full")      # full (26) | basic (6 cờ) | goal (6 cờ + loại đích) | 4 (mưa, đêm, gấp, dễ vỡ)
 
 
+TOK = ["rain", "night", "urg", "frag", "via", "mapg", "goal", "viat", "item"]
+G6 = ["tui do", "hop giay", "goi hang", "thung hang", "tap tai lieu", "buu kien"]
+
+
+def item7(text):
+    import re
+    sys.path.insert(0, "src")
+    from mapref import unaccent
+    u = unaccent(text)
+    for k, g in enumerate(G6):
+        if re.search(r"(?<![a-z])" + g + r"(?![a-z])(?! giat| dat)", u):
+            return k
+    return 6
+
+
+def pick(spec, base, goal1h, via1h, text=""):
+    out = []
+    for t in spec.split("+"):
+        if t == "item":
+            k = item7(text); out += [int(k == j) for j in range(7)]
+        elif t.startswith("g:"):          # đích thuộc NHÓM loại, vd g:library,lecture,lab
+            out += [int(any(goal1h[PL.index(q)] for q in t[2:].split(",")))]
+        else:
+            out += [base[TOK.index(t)]] if TOK.index(t) < 6 else (goal1h if t == "goal" else via1h)
+    return out
+
+
 def cond(x):
     m = x["m"]; s = x["s"]
     mapg = bool(m["goal_ref"]) and m["goal_ref"]["kind"] in ("anchor_near", "north_most", "south_most", "west_most", "east_most")
     base = [x["w"]["rain"], s["style"] == "night", m["urgent"], m["fragile"], bool(m["via"]), mapg]
+    if "+" in COND or COND.startswith("g:") or (COND in TOK and COND != "goal"):          # danh sách điều kiện riêng, vd "night+urg+goal"
+        return np.array(pick(COND, base, [m["goal"] == t for t in PL], [m["via"] == t for t in PL], m["text"]), np.float32)
     if COND == "4":
         return np.array(base[:4], np.float32)
     if COND == "basic":
