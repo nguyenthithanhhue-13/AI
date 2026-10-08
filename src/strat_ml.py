@@ -193,6 +193,24 @@ def group_key(key, night, rain, urgent, fragile, via=False, goal=None):
             "nd_w_u": nd + "/" + w + u, "nd_w_f": nd + "/" + w + f, "nd_u_f": nd + u + f}[key]
 
 
+PLACE_ORDER = ["library", "dorm", "sports", "clinic", "canteen", "parking", "lecture", "lab", "office", "gate"]
+
+
+def ml4_row(w, legs, r, qcfg, f, night, urgent, fragile):
+    """Đặc trưng "ml4" của 4 bước đi: đặc trưng bước (f = move_feats) + cờ đêm + chi phí mô hình lai của robot r (hiệu so với
+    min, cờ tối ưu) + loại nơi giao one-hot. Trả về (list 4 vector, mặt nạ hợp lệ)."""
+    F, valid = f[r == 4]
+    goal = next((t for t, v in w["landmarks"].items() if legs[-1] and tuple(legs[-1][0]) in [tuple(q) for q in v]), None)
+    q = np.zeros(4)
+    p = qcfg["params"].get(group_key(qcfg["key"], night, w["rain"], urgent, fragile, len(legs) == 2, goal)) if qcfg else None
+    if p is not None:
+        qq = np.array(SG(w, r == 4, lm_excl(w, legs)).q(theta_of(**p), legs))
+        qq = np.where(np.isfinite(qq), qq, 99.0)
+        q = np.minimum(qq - qq.min(), 30)
+    g = np.array([goal == t for t in PLACE_ORDER], float)
+    return [np.concatenate([F[d], [night, q[d], float(q[d] < 1e-6)], g]) for d in range(4)], valid
+
+
 class StrategyML:
     """Chiến thuật LAI (vòng private): robot có hàm chi phí tìm được theo điều kiện (đêm / ngày × mưa / gấp / dễ vỡ, scratch/p2_cd3.py)
     dùng Dijkstra với tham số đó (hòa: thẳng > phải > trái > quay đầu); robot còn lại dùng bộ phân loại học từ nhãn."""
@@ -292,6 +310,14 @@ class StrategyML:
                 d = fn(w, legs, r, cfg, night, urgent, fragile) if cfg["method"] != "tree" else                     self._tree_move(w, legs, r, cfg, night, urgent, fragile, mapgoal)
                 if d is not None:
                     out.append(int(d))
+                    continue
+            if cfg and cfg.get("method") == "ml4" and getattr(self, "ml4", None) and r in self.ml4:
+                # bộ phân loại học trên đặc trưng bước + đêm + chi phí mô hình lai + loại nơi giao (scratch/p2_ml4_train.py)
+                rows, valid = ml4_row(w, legs, r, cfg.get("qcfg"), f, night, urgent, fragile)
+                idx = [d for d in range(4) if valid[d]]
+                if idx:
+                    p = self.ml4[r].predict_proba(np.array([rows[d] for d in idx]))[:, 1]
+                    out.append(int(idx[int(np.argmax(p))]))
                     continue
             F, valid = f[r == 4]
             idx = [d for d in range(4) if valid[d]]

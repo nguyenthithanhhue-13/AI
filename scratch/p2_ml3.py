@@ -14,16 +14,18 @@ ROB = [int(a) for a in sys.argv[1:]] or list(range(10))
 
 
 def extra(split):
-    cp = CACHE / f"p2_ml3extra_{split}.pkl"
+    cp = CACHE / f"p2_ml4extra_{split}.pkl"
     if cp.exists():
         return pickle.load(open(cp, "rb"))
     D = load(split); out = []
     for x in D:
         night = x["s"]["style"] == "night"
         row = {}
+        goal = x["m"]["goal"]
+        row["goal"] = np.array([goal == t for t in ["library", "dorm", "sports", "clinic", "canteen", "parking", "lecture", "lab", "office", "gate"]], float)
         for r in range(1, 9):
             cfg = H[str(r)]
-            p = cfg["params"].get(group_key(cfg["key"], night, x["w"]["rain"], x["m"]["urgent"], x["m"]["fragile"], bool(x["m"]["via"])))
+            p = cfg["params"].get(group_key(cfg["key"], night, x["w"]["rain"], x["m"]["urgent"], x["m"]["fragile"], bool(x["m"]["via"]), goal))
             if p is None:
                 row[r] = np.zeros(4); continue
             q = np.array(SG(x["w"], r == 4, lm_excl(x)).q(theta_of(**p), x["legs"]))
@@ -47,7 +49,7 @@ def rows(split, r):
         for d in range(4):
             if valid[d]:
                 q = row.get(r, np.zeros(4))
-                X.append(np.concatenate([F[d], [night, q[d], float(q[d] < 1e-6)]])); y.append(int(Y[i, r] == d)); g.append((i, d))
+                X.append(np.concatenate([F[d], [night, q[d], float(q[d] < 1e-6)], row["goal"]])); y.append(int(Y[i, r] == d)); g.append((i, d))
     return np.array(X), np.array(y), g
 
 

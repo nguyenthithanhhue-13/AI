@@ -11,10 +11,11 @@ phá hòa riêng từng robot); nơi giao có thể **chỉ mô tả qua bản �
 | `predictions_p4_hybrid_tv.json` | chiến thuật lai theo điều kiện (đêm / mưa / gấp / dễ vỡ / điểm ghé) | ~0,83 | **0,7744** |
 | `predictions_p6_nlpkb.json` | + kho tên gọi vòng 1 vào từ điển | 0,839 | 0,7583 (kho tên gọi làm hại trên test → bỏ) |
 | `predictions_p11_goaltype.json` | + **loại nơi giao** là điều kiện ẩn (R2, R3, R7) + luật R0 | 0,867 | **0,8056** |
-| **`predictions_p12_tie.json`** (= `predictions.json`) | + thứ tự phá hòa riêng từng robot (R8 ưu tiên rẽ phải) | **0,871** | chưa nộp |
+| `predictions_p12_tie.json` | + thứ tự phá hòa riêng từng robot (R8 ưu tiên rẽ phải) | 0,871 | chưa nộp |
+| **`predictions_p13_ml4.json`** (= `predictions.json`) | + R5, R7 dùng bộ phân loại "ml4" (đặc trưng bước + đêm + chi phí mô hình lai + loại nơi giao) | **0,876** | chưa nộp |
 
-Từng robot (p12, validation, thông tin từ CV + đọc câu): R0 0,957 · R1 0,863 · R2 0,890 · R3 0,847 · R4 0,860 · R5 0,900 ·
-R6 0,820 · R7 0,830 · R8 0,850 · R9 0,893.
+Từng robot (p13, validation, thông tin từ CV + đọc câu): R0 0,957 · R1 0,863 · R2 0,890 · R3 0,847 · R4 0,860 · R5 0,927 ·
+R6 0,820 · R7 0,850 · R8 0,850 · R9 0,893.
 
 ## Cách chạy lại
 
@@ -23,6 +24,7 @@ R6 0,820 · R7 0,830 · R8 0,850 · R9 0,893.
 $env:NLP_LEX="canon"
 python src/run_cv.py validation v1final ; python src/run_cv.py test v1final     # CV (~23 phút cho test, PROCS=6)
 python src/pipeline_p2.py fit trainonly     # bộ đọc câu + mô hình học máy chỉ học train (để đo validation)
+python scratch/p2_ml4_train.py trainonly 5 7   # bộ phân loại ml4 cho R5, R7 (bản final: ... final 5 7)
 python src/pipeline_p2.py eval v1final      # validation end-to-end
 python src/pipeline_p2.py fit final         # học train + validation
 python src/pipeline_p2.py test v1final      # -> outputs/private_result/predictions.json

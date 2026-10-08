@@ -421,196 +421,202 @@
   }
  },
  "5": {
-  "method": "cost",
-  "key": "nd",
-  "params": {
-   "ngày": {
-    "crowd": 1,
-    "lm": 1,
-    "cover": -0.6,
-    "tR": 1,
-    "tL": 1,
-    "tB": 8
-   },
-   "đêm": {
-    "crowd": 5,
-    "lm": 8,
-    "cover": 0.0,
-    "tR": 0.25,
-    "tL": 0.25,
-    "tB": 1
+  "method": "ml4",
+  "qcfg": {
+   "method": "cost",
+   "key": "nd",
+   "params": {
+    "ngày": {
+     "crowd": 1,
+     "lm": 1,
+     "cover": -0.6,
+     "tR": 1,
+     "tL": 1,
+     "tB": 8
+    },
+    "đêm": {
+     "crowd": 5,
+     "lm": 8,
+     "cover": 0.0,
+     "tR": 0.25,
+     "tL": 0.25,
+     "tB": 1
+    }
    }
   }
  },
  "7": {
-  "method": "cost",
-  "key": "gt_f",
-  "params": {
-   "canteen/dễ vỡ=False": {
-    "crowd": 0.5,
-    "lm": 0,
-    "cover": -0.3,
-    "tR": 0.0,
-    "tL": 2,
-    "tB": 4
+  "method": "ml4",
+  "qcfg": {
+   "method": "cost",
+   "key": "gt_f",
+   "params": {
+    "canteen/dễ vỡ=False": {
+     "crowd": 0.5,
+     "lm": 0,
+     "cover": -0.3,
+     "tR": 0.0,
+     "tL": 2,
+     "tB": 4
+    },
+    "canteen/dễ vỡ=True": {
+     "crowd": 5,
+     "lm": 2,
+     "cover": 0.5,
+     "tR": 0.25,
+     "tL": 0.0,
+     "tB": 8
+    },
+    "clinic/dễ vỡ=False": {
+     "crowd": 0.5,
+     "lm": 2,
+     "cover": -0.3,
+     "tR": 0.0,
+     "tL": 0.0,
+     "tB": 0.0
+    },
+    "clinic/dễ vỡ=True": {
+     "crowd": 3,
+     "lm": 1,
+     "cover": 0.5,
+     "tR": 0.0,
+     "tL": 0.25,
+     "tB": 8
+    },
+    "dorm/dễ vỡ=False": {
+     "crowd": 0.5,
+     "lm": 0.5,
+     "cover": 0.0,
+     "tR": 0.0,
+     "tL": 2,
+     "tB": 4
+    },
+    "dorm/dễ vỡ=True": {
+     "crowd": 3,
+     "lm": 2,
+     "cover": 0,
+     "tR": 0.25,
+     "tL": 0.5,
+     "tB": 8
+    },
+    "gate/dễ vỡ=False": {
+     "crowd": 0.5,
+     "lm": 0.5,
+     "cover": -0.3,
+     "tR": 0.25,
+     "tL": 0.0,
+     "tB": 0.0
+    },
+    "gate/dễ vỡ=True": {
+     "crowd": 2,
+     "lm": 1,
+     "cover": -0.6,
+     "tR": 0.25,
+     "tL": 0.5,
+     "tB": 8
+    },
+    "lab/dễ vỡ=False": {
+     "crowd": 5,
+     "lm": 3,
+     "cover": 0.5,
+     "tR": 0.0,
+     "tL": 0.0,
+     "tB": 8
+    },
+    "lab/dễ vỡ=True": {
+     "crowd": 2,
+     "lm": 2,
+     "cover": -0.6,
+     "tR": 0.0,
+     "tL": 0,
+     "tB": 4
+    },
+    "lecture/dễ vỡ=False": {
+     "crowd": 0.5,
+     "lm": 0.0,
+     "cover": -0.6,
+     "tR": 0.25,
+     "tL": 0.0,
+     "tB": 0.5
+    },
+    "lecture/dễ vỡ=True": {
+     "crowd": 3,
+     "lm": 2,
+     "cover": -0.9,
+     "tR": 0.0,
+     "tL": 2,
+     "tB": 8
+    },
+    "library/dễ vỡ=False": {
+     "crowd": 1,
+     "lm": 0.5,
+     "cover": 0.0,
+     "tR": 0.25,
+     "tL": 0.0,
+     "tB": 0.0
+    },
+    "library/dễ vỡ=True": {
+     "crowd": 5,
+     "lm": 1,
+     "cover": 0.0,
+     "tR": 0.25,
+     "tL": 0.0,
+     "tB": 8
+    },
+    "office/dễ vỡ=False": {
+     "crowd": 1,
+     "lm": 2,
+     "cover": -0.3,
+     "tR": 0.0,
+     "tL": 0.25,
+     "tB": 0.5
+    },
+    "office/dễ vỡ=True": {
+     "crowd": 3,
+     "lm": 2,
+     "cover": -0.3,
+     "tR": 0.0,
+     "tL": 0.0,
+     "tB": 8
+    },
+    "parking/dễ vỡ=False": {
+     "crowd": 0.5,
+     "lm": 0.0,
+     "cover": -0.3,
+     "tR": 0.0,
+     "tL": 0.0,
+     "tB": 0.5
+    },
+    "parking/dễ vỡ=True": {
+     "crowd": 2,
+     "lm": 2,
+     "cover": -0.6,
+     "tR": 0.25,
+     "tL": 0.25,
+     "tB": 4
+    },
+    "sports/dễ vỡ=False": {
+     "crowd": 0.5,
+     "lm": 0.5,
+     "cover": -0.3,
+     "tR": 0.25,
+     "tL": 0.0,
+     "tB": 0.5
+    },
+    "sports/dễ vỡ=True": {
+     "crowd": 5,
+     "lm": 3,
+     "cover": 2,
+     "tR": 0.5,
+     "tL": 0.0,
+     "tB": 8
+    }
    },
-   "canteen/dễ vỡ=True": {
-    "crowd": 5,
-    "lm": 2,
-    "cover": 0.5,
-    "tR": 0.25,
-    "tL": 0.0,
-    "tB": 8
-   },
-   "clinic/dễ vỡ=False": {
-    "crowd": 0.5,
-    "lm": 2,
-    "cover": -0.3,
-    "tR": 0.0,
-    "tL": 0.0,
-    "tB": 0.0
-   },
-   "clinic/dễ vỡ=True": {
-    "crowd": 3,
-    "lm": 1,
-    "cover": 0.5,
-    "tR": 0.0,
-    "tL": 0.25,
-    "tB": 8
-   },
-   "dorm/dễ vỡ=False": {
-    "crowd": 0.5,
-    "lm": 0.5,
-    "cover": 0.0,
-    "tR": 0.0,
-    "tL": 2,
-    "tB": 4
-   },
-   "dorm/dễ vỡ=True": {
-    "crowd": 3,
-    "lm": 2,
-    "cover": 0,
-    "tR": 0.25,
-    "tL": 0.5,
-    "tB": 8
-   },
-   "gate/dễ vỡ=False": {
-    "crowd": 0.5,
-    "lm": 0.5,
-    "cover": -0.3,
-    "tR": 0.25,
-    "tL": 0.0,
-    "tB": 0.0
-   },
-   "gate/dễ vỡ=True": {
-    "crowd": 2,
-    "lm": 1,
-    "cover": -0.6,
-    "tR": 0.25,
-    "tL": 0.5,
-    "tB": 8
-   },
-   "lab/dễ vỡ=False": {
-    "crowd": 5,
-    "lm": 3,
-    "cover": 0.5,
-    "tR": 0.0,
-    "tL": 0.0,
-    "tB": 8
-   },
-   "lab/dễ vỡ=True": {
-    "crowd": 2,
-    "lm": 2,
-    "cover": -0.6,
-    "tR": 0.0,
-    "tL": 0,
-    "tB": 4
-   },
-   "lecture/dễ vỡ=False": {
-    "crowd": 0.5,
-    "lm": 0.0,
-    "cover": -0.6,
-    "tR": 0.25,
-    "tL": 0.0,
-    "tB": 0.5
-   },
-   "lecture/dễ vỡ=True": {
-    "crowd": 3,
-    "lm": 2,
-    "cover": -0.9,
-    "tR": 0.0,
-    "tL": 2,
-    "tB": 8
-   },
-   "library/dễ vỡ=False": {
-    "crowd": 1,
-    "lm": 0.5,
-    "cover": 0.0,
-    "tR": 0.25,
-    "tL": 0.0,
-    "tB": 0.0
-   },
-   "library/dễ vỡ=True": {
-    "crowd": 5,
-    "lm": 1,
-    "cover": 0.0,
-    "tR": 0.25,
-    "tL": 0.0,
-    "tB": 8
-   },
-   "office/dễ vỡ=False": {
-    "crowd": 1,
-    "lm": 2,
-    "cover": -0.3,
-    "tR": 0.0,
-    "tL": 0.25,
-    "tB": 0.5
-   },
-   "office/dễ vỡ=True": {
-    "crowd": 3,
-    "lm": 2,
-    "cover": -0.3,
-    "tR": 0.0,
-    "tL": 0.0,
-    "tB": 8
-   },
-   "parking/dễ vỡ=False": {
-    "crowd": 0.5,
-    "lm": 0.0,
-    "cover": -0.3,
-    "tR": 0.0,
-    "tL": 0.0,
-    "tB": 0.5
-   },
-   "parking/dễ vỡ=True": {
-    "crowd": 2,
-    "lm": 2,
-    "cover": -0.6,
-    "tR": 0.25,
-    "tL": 0.25,
-    "tB": 4
-   },
-   "sports/dễ vỡ=False": {
-    "crowd": 0.5,
-    "lm": 0.5,
-    "cover": -0.3,
-    "tR": 0.25,
-    "tL": 0.0,
-    "tB": 0.5
-   },
-   "sports/dễ vỡ=True": {
-    "crowd": 5,
-    "lm": 3,
-    "cover": 2,
-    "tR": 0.5,
-    "tL": 0.0,
-    "tB": 8
-   }
-  },
-  "order": [
-   "rel",
-   "SLBR"
-  ]
+   "order": [
+    "rel",
+    "SLBR"
+   ]
+  }
  },
  "0": {
   "method": "lex",

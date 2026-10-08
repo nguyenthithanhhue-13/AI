@@ -104,6 +104,8 @@ def predict_split(split, cv_mode, mode):
     st = StrategyML.load(OUT / f"strategy_ml_{mode}.pkl")
     hp = OUT / ("strategy_hybrid_final.json" if mode == "final" and (OUT / "strategy_hybrid_final.json").exists() else "strategy_hybrid.json")
     st.hybrid = json.loads(hp.read_text(encoding="utf-8")) if hp.exists() else {}
+    m4 = OUT / f"strategy_ml4_{mode}.pkl"
+    st.ml4 = pickle.load(open(m4, "rb")) if m4.exists() else {}
     preds = []; stat = Counter()
     for si in range(len(rows) // 10):
         img = rows[si * 10]["image"]; text = rows[si * 10]["mission"]
