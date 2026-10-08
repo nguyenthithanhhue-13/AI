@@ -39,7 +39,16 @@ SPLITS = {
 }
 SPLITS.update({"loại đích (10)": lambda x: x["m"]["goal"], "kiểu vẽ (4)": lambda x: x["s"]["style"],
                "hướng mũi (4)": lambda x: x["w"]["heading"], "loại ghé (11)": lambda x: str(x["m"]["via"])})
-MULTI = {"loại đích (10)", "kiểu vẽ (4)", "hướng mũi (4)", "loại ghé (11)"}
+G6 = ["tui do", "hop giay", "goi hang", "thung hang", "tap tai lieu", "buu kien"]
+def ITEM6(x):
+    u = UN(x)
+    for g in G6:
+        if re.search(r"\b" + g + r"\b(?! giat| dat)", u):
+            return g
+    return "khác"
+SPLITS.update({"món hàng (7)": ITEM6, "món hàng × dễ vỡ": lambda x: ITEM6(x) + str(x["m"]["fragile"]),
+               "món chung/đặc thù": lambda x: ITEM6(x) != "khác"})
+MULTI = {"loại đích (10)", "kiểu vẽ (4)", "hướng mũi (4)", "loại ghé (11)", "món hàng (7)", "món hàng × dễ vỡ"}
 ONLY = sys.argv[3].split(",") if len(sys.argv) > 3 else None
 if ONLY:
     SPLITS = {k: v for k, v in SPLITS.items() if k in ONLY or k == "không chia"}

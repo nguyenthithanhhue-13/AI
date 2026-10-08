@@ -311,6 +311,31 @@ class StrategyML:
                 if d is not None:
                     out.append(int(d))
                     continue
+            if cfg and cfg.get("method") == "hv":
+                # GỘP: trung bình log-xác suất các bộ siêu tuyến tính (cfg["sets"]) và bộ tìm đường vin, trọng số cfg["a"]
+                import hyper as _hy, vin as _vin
+                hs = getattr(self, "hypers", {})
+                L = [_hy.logp(hs[t], r, w, legs, night, urgent, fragile, mapgoal) for t in cfg.get("sets", [""]) if t in hs]
+                L = [x for x in L if x is not None]
+                lv = None
+                if getattr(self, "vin", None) and r in self.vin and legs and legs[-1]:
+                    lv = sum(_vin.logprobs(W, w, legs, r == 4, night, urgent, fragile, mapgoal) for W in self.vin[r]) / len(self.vin[r])
+                if L or lv is not None:
+                    a = cfg.get("a", 0.67) if (L and lv is not None) else (1.0 if L else 0.0)
+                    sc = a * (sum(L) / len(L) if L else 0) + (1 - a) * (lv if lv is not None else 0)
+                    ok = [d for d, info in w["adj"].get(w["robot"], {}).items() if _hy.ok_edge(info, r == 4)]
+                    if ok:
+                        out.append(int(max(ok, key=lambda d: sc[d] if np.isfinite(sc[d]) else -1e18)))
+                        continue
+                cfg = cfg.get("fallback") or cfg
+            if cfg and cfg.get("method") == "hyper" and getattr(self, "hyper", None) and r in self.hyper:
+                # mô hình siêu tuyến tính trên mặt Pareto (src/hyper.py, scratch/p2_hyper.py)
+                import hyper as _hy
+                d = _hy.predict(self.hyper, r, w, legs, night, urgent, fragile, mapgoal)
+                if d is not None:
+                    out.append(int(d))
+                    continue
+                cfg = cfg.get("fallback") or cfg
             if cfg and cfg.get("method") == "vin" and getattr(self, "vin", None) and r in self.vin:
                 # bộ tìm đường có hàm chi phí học được (src/vin.py, scratch/p2_vin2.py)
                 import vin as _vin

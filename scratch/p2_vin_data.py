@@ -13,6 +13,19 @@ PL = PLACES
 import os
 ABSDIR = os.environ.get("ABSDIR") == "1"     # thêm hướng tuyệt đối của bước (lên / xuống / trái / phải)
 NF = 4 + 1 + 10 + 4 + (4 if ABSDIR else 0)
+ITEM = os.environ.get("ITEM") == "1"         # thêm món hàng chở (6 món chung + khác) vào điều kiện cảnh
+G6 = ["tui do", "hop giay", "goi hang", "thung hang", "tap tai lieu", "buu kien"]
+import re as _re
+sys.path.insert(0, "src")
+from mapref import unaccent as _un
+
+
+def item6(text):
+    u = _un(text)
+    for k, g in enumerate(G6):
+        if _re.search(r"(?<![a-z])" + g + r"(?![a-z])(?! giat| dat)", u):
+            return k
+    return 6
 
 
 def encode(x, legged):
@@ -44,7 +57,8 @@ def cond(x):
     m = x["m"]; s = x["s"]
     mapg = bool(m["goal_ref"]) and m["goal_ref"]["kind"] in ("anchor_near", "north_most", "south_most", "west_most", "east_most")
     return np.array([x["w"]["rain"], s["style"] == "night", m["urgent"], m["fragile"], bool(m["via"]), mapg] +
-                    [m["goal"] == t for t in PL] + [m["via"] == t for t in PL], np.float32)
+                    [m["goal"] == t for t in PL] + [m["via"] == t for t in PL] +
+                    ([item6(m["text"]) == k for k in range(7)] if ITEM else []), np.float32)
 
 
 ROT_D = [3, 2, 0, 1]      # xoay 90° theo chiều kim đồng hồ: LÊN->PHẢI, XUỐNG->TRÁI, TRÁI->LÊN, PHẢI->XUỐNG
@@ -73,7 +87,7 @@ if __name__ == "__main__":
     N = len(D)
     NX = np.zeros((N, 325, 4), np.int16); NXL = np.zeros((N, 325, 4), np.int16)
     EE = np.zeros((N, 325, 4, NF), np.uint8); EL = np.zeros((N, 325, 4, NF), np.uint8)
-    G = np.zeros((N, 81), bool); V = np.zeros((N, 81), bool); ST = np.zeros(N, np.int16); C = np.zeros((N, 26), np.float32)
+    G = np.zeros((N, 81), bool); V = np.zeros((N, 81), bool); ST = np.zeros(N, np.int16); C = np.zeros((N, 26 + (7 if ITEM else 0)), np.float32)
     Y = np.zeros((N, 10), np.int8)
     for i, x in enumerate(D):
         NX[i], EE[i] = encode(x, False); NXL[i], EL[i] = encode(x, True)
@@ -85,5 +99,5 @@ if __name__ == "__main__":
         rb = x["w"]["robot"]
         ST[i] = (rb[0] * 9 + rb[1]) * 4 + x["w"]["heading"]
         C[i] = cond(x); Y[i] = x["y"]
-    np.savez_compressed(f"cache/p2_vin_{'abs_' if ABSDIR else ''}{split}.npz", nxt=NX, nxtl=NXL, E=EE, EL=EL, goal=G, via=V, start=ST, C=C, y=Y)
+    np.savez_compressed(f"cache/p2_vin_{'abs_' if ABSDIR else ''}{'item_' if ITEM else ''}{split}.npz", nxt=NX, nxtl=NXL, E=EE, EL=EL, goal=G, via=V, start=ST, C=C, y=Y)
     print(split, N, "xong")

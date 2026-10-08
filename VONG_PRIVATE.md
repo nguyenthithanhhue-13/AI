@@ -15,7 +15,8 @@ phá hòa riêng từng robot); nơi giao có thể **chỉ mô tả qua bản �
 | `predictions_p13_ml4.json` | + R5, R7 dùng bộ phân loại "ml4" (đặc trưng bước + đêm + chi phí mô hình lai + loại nơi giao) | 0,876 | chưa nộp |
 | `predictions_p14_vin.json` | + R1, R2, R4, R6 dùng BỘ TÌM ĐƯỜNG CÓ HÀM CHI PHÍ HỌC ĐƯỢC (`src/vin.py`, mạng nhỏ + lặp giá trị, gộp 3 mạng) | 0,884 | chưa nộp |
 | `predictions_p15_vinbig.json` | + mạng lớn (hid 128) cho R1, R4 (gộp với mạng nhỏ), R8; bộ nhận diện mô tả qua bản đồ thêm "tít / đầu phía / hơn tất cả / bậc nhất" (test: 464 -> 487 cảnh nhận ra) | 0,888 | **0,8189** |
-| **`predictions_p16_mapref3.json`** (= `predictions.json`) | + bộ nhận diện mô tả qua bản đồ TỔNG QUÁT (`mapref._generic`: dấu so sánh nhất + từ hướng / từ gần trong một vế câu; "gần nhất với X", "phía bắc xa nhất", "mạn bắc nhất", "cách X ngắn nhất"...; và đầu ngữ chung + gần / phía khi "nhất" bị bỏ). Câu thử tự soạn: vòng 2 50,6% -> 100% (3060), vòng 3 end-to-end 1788/1788, không "nhất" 1200/1200; train / validation không đổi. Test: nhận ra mô tả qua bản đồ 487 -> 608 cảnh; khác p15 296 dòng / 96 cảnh | 0,888 | chưa nộp |
+| `predictions_p16_mapref3.json` | + bộ nhận diện mô tả qua bản đồ TỔNG QUÁT (`mapref._generic`: dấu so sánh nhất + từ hướng / từ gần trong một vế câu; "gần nhất với X", "phía bắc xa nhất", "mạn bắc nhất", "cách X ngắn nhất"...; và đầu ngữ chung + gần / phía khi "nhất" bị bỏ). Câu thử tự soạn: vòng 2 50,6% -> 100% (3060), vòng 3 end-to-end 1788/1788, không "nhất" 1200/1200; train / validation không đổi. Test: nhận ra mô tả qua bản đồ 487 -> 608 cảnh; khác p15 296 dòng / 96 cảnh | 0,888 | 0,8189 (= p15: các cảnh đổi gần như chắc là cảnh MỒI không chấm) |
+| **`predictions_p17_hyper.json`** (= `predictions.json`) | + mô hình SIÊU TUYẾN TÍNH trên mặt Pareto (`src/hyper.py`): chi phí đường TUYẾN TÍNH theo [số đoạn, đông, mái che, không mái, xuyên địa điểm (gộp + từng loại), bậc thang, rẽ R/L/B] + phạt rẽ bước đầu, trọng số = softplus(MLP(điều kiện cảnh)); khớp train ~0,998 với mọi robot. GỘP log-xác suất (method `hv`): R1, R2, R6, R8 = vin + hyper đầy đủ + hyper (cờ + loại đích); R3 = 2 bộ hyper; R7 = hyper (cờ + loại đích); R0, R4, R5, R9 giữ như p15. Khác p16 871 dòng | **0,894** | chưa nộp |
 
 Từng robot (p14: R1 0,893 · R2 0,893 · R4 0,867 · R6 0,867; còn lại như p13) (p13, validation, thông tin từ CV + đọc câu): R0 0,957 · R1 0,863 · R2 0,890 · R3 0,847 · R4 0,860 · R5 0,927 ·
 R6 0,820 · R7 0,850 · R8 0,850 · R9 0,893.
@@ -48,6 +49,7 @@ Tham số chiến thuật nằm trong `outputs/strategy_hybrid.json` (chỉ họ
 | `src/strategy.py` | đích chốt theo vị trí (`("pos", (r, c))`) |
 | `src/strat_ml.py` | chiến thuật lai: Dijkstra trên (giao lộ, hướng) với tham số theo nhóm điều kiện; luật thứ tự từ điển cho R0; tham lam cho R9; nhận diện ảnh BAN ĐÊM theo độ sáng |
 | `src/pipeline_p2.py` | ghép CV + NLP + chiến thuật |
+| `src/hyper.py` | mô hình siêu tuyến tính: mặt Pareto các đường (số đoạn <= ngắn nhất + 5) + trọng số theo điều kiện (huấn luyện `scratch/p2_hyper.py`, mặt Pareto `scratch/p2_pareto.py`, xuất `scratch/p2_hyper_export.py`) |
 | `src/vin.py` | dự đoán bằng numpy của bộ tìm đường có hàm chi phí học được (huấn luyện: `scratch/p2_vin_data.py`, `scratch/p2_vin2.py`, xuất: `scratch/p2_vin_export.py`) |
 
 ## Phát hiện về chiến thuật (từ nhãn train)
@@ -59,6 +61,7 @@ Tham số chiến thuật nằm trong `outputs/strategy_hybrid.json` (chỉ họ
 - **Loại nơi giao** là điều kiện ẩn của R2, R3, R7 (`scratch/p2_cond.py`): R2 0,78 → 0,90, R3 0,66 → 0,86.
 - **R8** đi rất khác nhau khi có / không có điểm ghé; khi hòa ưu tiên rẽ phải.
 - **R9** tham lam: khoảng cách đường chim bay tới điểm đến + phạt đông / đi xuyên địa điểm theo đêm × dễ vỡ × gấp.
+- Mổ mạng chi phí (`scratch/p2_vin_probe.py`): phạt đi XUYÊN địa điểm khác nhau THEO LOẠI: R1 né ký túc xá / sân thể thao / căn tin, R2 né bãi xe / sân thể thao (+ phòng y tế), R6 né ký túc xá / căn tin, R8 né thư viện / giảng đường / phòng hành chính / cổng, R4 như nhau. Chi phí tuyến tính theo đặc trưng đường với trọng số phụ thuộc điều kiện khớp train ~0,998.
 - Mọi lần đi vòng đều đúng +2 đoạn; phần còn sai (10–15% ở R1, R4, R6, R7, R8) chưa giải thích được.
 
 ## Tuân thủ quy định

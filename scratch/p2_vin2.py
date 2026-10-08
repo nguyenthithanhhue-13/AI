@@ -2,7 +2,7 @@
 lặp giá trị "mềm" trên (giao lộ, hướng) tới đích (2 chặng nếu có điểm ghé), xác suất bước đầu = softmax(-Q / tau).
 Học trên train, đo validation (thông tin đúng). Cần PYTHONPATH=F:/pylibs (torch CUDA).
     python scratch/p2_vin.py <robot> [epochs] [hidden]"""
-import sys, time, numpy as np, torch, torch.nn as nn
+import sys, os, time, numpy as np, torch, torch.nn as nn
 
 r = int(sys.argv[1]); EP = int(sys.argv[2]) if len(sys.argv) > 2 else 60; HID = int(sys.argv[3]) if len(sys.argv) > 3 else 64
 SEEDS = int(sys.argv[4]) if len(sys.argv) > 4 else 1; FINAL = len(sys.argv) > 5 and sys.argv[5] == "final"
@@ -14,7 +14,10 @@ BIG = 60.0; K = 48; TAU = 0.15
 def load(split):
     z = np.load(f"cache/p2_vin_{split}.npz")
     leg = r == 4
-    return dict(nxt=torch.tensor(z["nxtl" if leg else "nxt"].astype(np.int64)), E=torch.tensor(z["EL" if leg else "E"].astype(np.float32)),
+    E = z["EL" if leg else "E"].astype(np.float32)
+    if os.environ.get("NOLMT") == "1":      # thí nghiệm: bỏ LOẠI địa điểm đi xuyên (chỉ giữ cờ có / không)
+        E[..., 5:15] = 0
+    return dict(nxt=torch.tensor(z["nxtl" if leg else "nxt"].astype(np.int64)), E=torch.tensor(E),
                 goal=torch.tensor(z["goal"]), via=torch.tensor(z["via"]), start=torch.tensor(z["start"].astype(np.int64)),
                 C=torch.tensor(z["C"]), y=torch.tensor(z["y"][:, r].astype(np.int64)))
 
@@ -26,10 +29,17 @@ VA_AUG = os.environ.get("VTRAIN", "train").endswith("_aug")
 NF = TR["E"].shape[-1]; NC = TR["C"].shape[-1]
 
 
+ARCH = os.environ.get("ARCH", "mlp")     # "bilin": chi phí = [1, E] · W · [1, C, cờ bước đầu] (song tuyến tính, ít tham số)
+
+
 class Net(nn.Module):
     def __init__(self):
         super().__init__()
-        self.f = nn.Sequential(nn.Linear(NF + NC + 1, HID), nn.ReLU(), nn.Linear(HID, HID), nn.ReLU(), nn.Linear(HID, 1))
+        if ARCH == "bilin":
+            W = torch.zeros(NF + 1, NC + 2); W[0, 0] = 1.0
+            self.W = nn.Parameter(W)
+        else:
+            self.f = nn.Sequential(nn.Linear(NF + NC + 1, HID), nn.ReLU(), nn.Linear(HID, HID), nn.ReLU(), nn.Linear(HID, 1))
         self.out_t = nn.Parameter(torch.tensor(0.0))
 
     def cost(self, E, C, first=0.0):
@@ -37,6 +47,11 @@ class Net(nn.Module):
         sh = E.shape[:-1]
         Cx = C.view(C.shape[0], *([1] * (len(sh) - 1)), NC).expand(*sh, NC)
         fl = torch.full((*sh, 1), first, device=E.device)
+        if ARCH == "bilin":
+            one = torch.ones((*sh, 1), device=E.device)
+            Ee = torch.cat([one, E], -1); Ce = torch.cat([one, Cx, fl], -1)
+            z = torch.einsum("...i,ij,...j->...", Ee, self.W, Ce)
+            return nn.functional.softplus(4 * z) / 4 + 0.02
         return nn.functional.softplus(self.f(torch.cat([E, Cx, fl], -1)).squeeze(-1)) + 0.05
 
     def forward(self, b, hard=False):
