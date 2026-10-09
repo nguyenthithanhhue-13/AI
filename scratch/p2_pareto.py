@@ -15,6 +15,7 @@ NFP = 8
 import os
 UNC = int(os.environ.get("UNC") == "1")      # thêm cột "số đoạn KHÔNG mái che" (để robot thích mái che không bị cắt mặt Pareto sai)
 TYPED = os.environ.get("TYPED") == "1"    # đếm xuyên địa điểm RIÊNG từng loại (10 cột thay cho 1)
+HOR = int(os.environ.get("HOR", "999"))     # tầm nhìn (số đoạn đầu được đếm đặc trưng)
 
 
 def ok_edge(info, legged):
@@ -113,9 +114,10 @@ def fronts(x, legged):
                 rel = REL[h][d2]
                 st2 = info2[0]
                 p2 = 1 if (p == 1 or (via and m in via)) else 0
-                g = (f[0] + 1, f[1] + (st2 == "crowded"), f[2] + (st2 == "covered"), f[3] + (m in lm), f[4] + bool(info2[1]),
-                     f[5] + (rel == "R"), f[6] + (rel == "L"), f[7] + (rel == "B")) + ((f[8] + (st2 != "covered"),) if UNC else ()) + \
-                    tuple(a + b for a, b in zip(f[8 + UNC:], lv(m)))
+                v = 1 if f[0] < HOR else 0          # TẦM NHÌN: chỉ đếm đặc trưng của HOR đoạn đầu (số đoạn luôn đếm)
+                g = (f[0] + 1, f[1] + v * (st2 == "crowded"), f[2] + v * (st2 == "covered"), f[3] + v * (m in lm), f[4] + bool(info2[1]),
+                     f[5] + v * (rel == "R"), f[6] + v * (rel == "L"), f[7] + v * (rel == "B")) + ((f[8] + v * (st2 != "covered"),) if UNC else ()) + \
+                    tuple(a + v * b for a, b in zip(f[8 + UNC:], lv(m)))
                 rem2 = dg if p2 == 1 else rem0
                 if g[0] + rem2.get(m, 10 ** 6) > H:
                     continue
@@ -142,7 +144,7 @@ if __name__ == "__main__":
             pass
     with Pool(6) as pool:
         R = pool.map(job, D, chunksize=8)
-    T = ("t" if TYPED else "") + ("u" if UNC else "")
+    T = ("t" if TYPED else "") + ("u" if UNC else "") + (f"s{SLACK}" if SLACK != 5 else "") + (f"h{HOR}" if HOR != 999 else "")
     pickle.dump([r[0] for r in R], open(f"cache/p2_pareto{T}_{split}_0.pkl", "wb"))
     pickle.dump([r[1] for r in R], open(f"cache/p2_pareto{T}_{split}_1.pkl", "wb"))
     sz = [len(v[1]) for r in R for v in r[0].values()]

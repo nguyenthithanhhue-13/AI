@@ -8,12 +8,16 @@ from scipy.optimize import linprog
 sys.path.insert(0, "scratch")
 from p2_lib import *
 r = int(sys.argv[1]); KEY = sys.argv[2]; LAM = float(sys.argv[3]) if len(sys.argv) > 3 else 1e-3
-leg = int(r == 4); RELS = "SRLB"; NW = 22
+leg = int(r == 4); RELS = "SRLB"
+import os
+RATIO = os.environ.get("RATIO") == "1"   # thêm đặc trưng TỈ LỆ (đông / mái / không mái / địa điểm / rẽ chia cho số đoạn)
+FIRST3 = os.environ.get("FIRST3") == "1"   # đặc trưng RIÊNG của bước đầu: đông / mái che / vào địa điểm
+NW = 22 + (6 if RATIO else 0) + (3 if FIRST3 else 0)
 
 
 def prep(split):
     D = load(split)
-    P = pickle.load(open(f"cache/p2_paretotu_{split}_{leg}.pkl", "rb"))
+    P = pickle.load(open(f"cache/p2_pareto{__import__('os').environ.get('PF', 'tu')}_{split}_{leg}.pkl", "rb"))
     out = []
     for x, fr in zip(D, P):
         mv = []
@@ -21,7 +25,17 @@ def prep(split):
             first = np.zeros(3)
             if rel != "S":
                 first["RLB".index(rel)] = 1
-            mv.append((d, np.hstack([F.astype(float), np.tile(first, (len(F), 1))])))
+            Ff = F.astype(float)
+            if RATIO:
+                h = np.maximum(Ff[:, :1], 1)
+                Ff = np.hstack([Ff, Ff[:, [1, 2, 8, 3, 5, 7]] / h * 10])
+            if FIRST3:
+                info = x["w"]["adj"][x["w"]["robot"]][d]
+                n2 = (x["w"]["robot"][0] + DRC[d][0], x["w"]["robot"][1] + DRC[d][1])
+                tg = {q for L in x["legs"] for q in L}
+                lmn = {q for v in x["w"]["landmarks"].values() for q in v} - tg
+                first = np.r_[first, info[0] == "crowded", info[0] == "covered", n2 in lmn]
+            mv.append((d, np.hstack([Ff, np.tile(first, (len(F), 1))])))
         out.append((x, mv))
     return out
 

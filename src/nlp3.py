@@ -8,6 +8,7 @@ Mốc của "gần X nhất" được đọc bằng chính MissionParser2 (tên 
 bản đồ (trên train + validation mốc luôn có đúng một bản).
 """
 import pickle
+import re
 
 import mapref
 from nlp2 import MissionParser2, resolve_with_map, CANONICAL_ACC, PLACE_TYPES, _unaccent
@@ -21,6 +22,35 @@ def _name(t, accented):
 def _subst(text, span, t):
     a, b = span
     return text[:a] + _name(t, not text.isascii()) + text[b:]
+
+
+# (vòng private) Khung ĐỐI CHIẾU trong vế giao hàng: "đưa A tới không phải X mà là Y giúp mình", "đưa A tới Y chứ không phải X".
+# Bộ đọc coi cả vế có "không phải" là phủ định -> mất đích Y (và hay đôn điểm ghé lên làm đích: lỗi ĐÍCH + GHÉ trên chính train).
+# Viết lại thành câu khẳng định + câu gây nhiễu quen thuộc: "đưa A tới Y giúp mình. X không phải điểm nhận."
+CONTRAST_FIX = False      # TẮT: p22 (có viết lại) LB 0,8317 < p19 0,8350 (62 dòng khác, 48 dòng do viết lại) -> hại trên test
+_KP = r"(?:khong|kong|khng|hkong|kohng|khogn|khog)\s+(?:phai|hai|pahi|phi|pai|phia|phair|phaii)"
+_END = r"(?=\s*(?:[.,;:!?)(]|$)|\s+(?:giup|nhe|nha|dang|nho|truoc|roi|nhung)\b)"
+
+
+def contrast_rewrite(text):
+    keep = mapref._unaccent_keep(text)
+    if len(keep) != len(text):
+        return text
+    m = re.search(r"\b" + _KP + r"\s+(.{2,60}?)\s+ma\s+la\s+", keep)
+    if m and not re.match(r"(o do|diem nhan|la)\b", m.group(1)):
+        x = text[m.start(1):m.end(1)]
+        out = text[:m.start()] + text[m.end():]
+        e = re.search(r"[.!?]", out[m.start():])
+        cut = m.start() + (e.end() if e else len(out) - m.start())
+        return out[:cut].rstrip() + (" " if e else ". ") + x + " không phải điểm nhận. " + out[cut:].lstrip()
+    m = re.search(r"\s*,?\s*\bchu\s+" + _KP + r"\s+(.{2,60}?)" + _END, keep)
+    if m and not re.match(r"(o do|diem nhan)\b", m.group(1)):
+        x = text[m.start(1):m.end(1)]
+        out = text[:m.start()] + text[m.end():]
+        e = re.search(r"[.!?]", out[m.start():])
+        cut = m.start() + (e.end() if e else len(out) - m.start())
+        return out[:cut].rstrip() + (" " if e else ". ") + x + " không phải điểm nhận. " + out[cut:].lstrip()
+    return text
 
 
 def is_mapref_mission(m):
@@ -80,6 +110,8 @@ class MissionParser3:
         return max(one, key=lambda t: d[PLACE_TYPES.index(t)])
 
     def parse(self, text, present=None, landmarks=None):
+        if CONTRAST_FIX:
+            text = contrast_rewrite(text)
         mapref.VOCAB = self.vocab
         f = mapref.find(text, self.vocab)
         if f and f["span"] and landmarks:

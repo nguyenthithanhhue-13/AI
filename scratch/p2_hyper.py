@@ -66,7 +66,11 @@ def prep(split):
     F, pm, msc, mdir, mrel, C, Y = [], [], [], [], [], [], []
     mi = 0
     for i, (x, fr) in enumerate(zip(D, P)):
-        C.append(cond(x)); Y.append(x["y"][r])
+        c = cond(x)
+        if os.environ.get("DIST") == "1":          # thêm KHOẢNG CÁCH ngắn nhất (số đoạn) tới điểm đến làm điều kiện
+            s = min(Fm[:, 0].min() for _, Fm in fr.values()) if fr else 0
+            c = np.concatenate([c, np.array([s / 10.0, s >= 6, s >= 9], np.float32)])
+        C.append(c); Y.append(x["y"][r])
         for d, (rel, Fm) in sorted(fr.items()):
             F.append(Fm); pm += [mi] * len(Fm); msc.append(i); mdir.append(d); mrel.append(RELS.index(rel)); mi += 1
     return dict(F=torch.tensor(np.concatenate(F), dtype=torch.float32), pm=torch.tensor(pm), msc=torch.tensor(msc),

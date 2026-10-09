@@ -153,6 +153,8 @@ URGENT_POS = r"\bgap\b|\bkhan\b|hoa toc|\blap tuc\b|\btuc thi\b|cang (nhanh|som)
 FRAGILE_NEG = r"khong (de )?(vo|be|hong|nut)\b|khong lo (vo|be|hong)|chac chan|\bben\b(?! (trong|ngoai|canh|trai|phai|kia|nay|duoi|tren|do|hong|nhan|giao|gui))|roi cung|va dap cung|khong so (vo|va|roi)|" \
               r"chang (so|lo)|kho (vo|hong)\b|\bcung cap\b|khong mong manh|khong can nhe" + FRAGILE_NEG_MORE + (
               r"|khong (the )?bi (vo|be|nut|gay|mop|hong)|khong the (vo|be|nut|gay|mop|hong)" if FLAG_MORE2 else "")
+# (vòng private) "cần ngay trong 5 phút", "trong 10 phút nữa": hạn thời gian ngắn = gấp (kiến thức chung; "không cần ngay" do URGENT_NEG)
+URGENT_POS += r"|\bngay trong (\d+|mot|hai|ba|bon|nam|muoi|vai|it) (phut|tieng|gio)\b|\bcan ngay\b"
 FRAGILE_POS = r"\bde (vo|be|hong|nut|me)\b|thuy tinh|\bgom\b(?! (mot|hai|ba|bon|nam|sau|bay|tam|chin|muoi|\d|co|cac|nhung|ca)\b)|\b(do|bang|gom) su\b|pha le|mong manh|\bky va\b|tranh va\b|nhe tay|can than(?! (keo |ke |khong )?(nham|lac|sai|tre|muon|cham|quen|lo)\b)|" \
               r"tranh rung|\bhang de\b|nang niu|khong duoc (roi|lac|va)\b|dung (lam roi|lac(?! (sang|vao|toi|den|qua)\b)|quang)|cam (nem|quang)" + FRAGILE_POS_MORE
 # từ mở đầu một MÓN HÀNG (hộp, khay, thẻ, túi...): "hộp thuốc", "thẻ thư viện" là hàng chứ không phải địa điểm
@@ -441,6 +443,39 @@ def _dir_text(s):
     return s
 # cụm gấp / dễ vỡ ("không cần vội", "không quá gấp", "không lo vỡ", "không được chậm"...) nói về HÀNG, không phải về địa điểm:
 # bỏ chúng đi trước khi xét câu có phủ định một địa điểm hay không ("Giao hộp tới X, không cần vội" -> X vẫn là đích)
+# (vòng private) LỖI GÕ làm gãy cụm cờ ("không được chmậ trễ", "cần ngay tong 5 phút", "kện hàng rất mng manh"): thử sửa ĐÚNG MỘT từ
+# (cách một ký tự: đảo / rơi / thừa / thay) thành một từ có trong mẫu cờ gấp / dễ vỡ; nhận nếu câu sau khi sửa khớp mẫu cờ. Từ HIẾM
+# trong dữ liệu học (lỗi gõ) được sửa tự do; từ THÔNG DỤNG ("cam" ~ cảm ơn, "gan" ~ gần) chỉ khi mẫu khớp là cụm >= 2 từ chứa nó.
+FLAG_TYPO_FIX = True
+_FLAG_WORDS = None
+
+
+def flag_repair(s, freq):
+    global _FLAG_WORDS
+    from nlp import dl_distance
+    if _FLAG_WORDS is None:
+        _FLAG_WORDS = sorted({w for pat in (URGENT_POS, FRAGILE_POS) for w in re.findall(r"[a-z]{3,}", re.sub(r"\\[a-zA-Z]", " ", pat))})
+    if re.search(URGENT_POS, s) or re.search(FRAGILE_POS, s):
+        return s
+    toks = s.split()
+    for i, t in enumerate(toks):
+        if len(t) < 3 or not t.isalpha():
+            continue
+        rare = freq.get(t, 0) < 3
+        if not rare:
+            continue           # chỉ sửa từ HIẾM (lỗi gõ thật); "noi lam" -> "hoi lam" (từ thông dụng) là sai
+        for k in _FLAG_WORDS:
+            if abs(len(k) - len(t)) > 1 or dl_distance(t, k, 1) != 1:
+                continue
+            s2 = " ".join(toks[:i] + [k] + toks[i + 1:])
+            st = len(" ".join(toks[:i])) + (1 if i else 0); en = st + len(k)
+            for pat in (URGENT_POS, FRAGILE_POS):
+                for m in re.finditer(pat, s2):
+                    if m.start() <= st and m.end() >= en and (rare or len(m.group().split()) >= 2):
+                        return s2
+    return s
+
+
 FLAG_STRIP = re.compile("|".join(f"(?:{x})" for x in (URGENT_NEG, FRAGILE_NEG, DOUBLE_NEG, URGENT_POS, FRAGILE_POS,
                                                        r"\b(dung|khong duoc|cam) (di |chay |lam |giao |de |mang |dua )?(cham|tre|lau|muon)\b")))
 # không dấu "vội" = "với": "đừng nhầm với X" khớp mẫu "đừng ... vội" -> cụm có "nhầm" luôn là phủ định địa điểm, giữ lại
@@ -2102,6 +2137,10 @@ class MissionParser2:
     def _phrase_flags(self, s, acc=None):
         """-> (gấp?, dễ vỡ?) của một câu con không chứa địa điểm:
         bảng cụm đã học -> khớp mờ -> luật từ khóa -> vector nghĩa e5 -> phân loại ký tự."""
+        if FLAG_TYPO_FIX:
+            s2 = flag_repair(s, getattr(self, "freq", {}))
+            if s2 != s:
+                s, acc = s2, None
         if DNEG_FIX and re.search(_DNEG, s):
             # đợt 20: phủ định KÉP triệt tiêu ("đơn này không phải không gấp" = gấp, "không phải là không dễ vỡ" = dễ vỡ)
             s = re.sub(r"\s+", " ", re.sub(_DNEG, " ", s)).strip()
@@ -2118,6 +2157,9 @@ class MissionParser2:
             # không còn thấy "đường trơn" ở vế kia)
             return self._phrase_flags(re.sub(r"\s+", " ", _road_free(s)).strip(" ,"), None)
         lab = self.phrase.get(s)
+        if FLAG_TYPO_FIX and lab == 0 and ((re.search(URGENT_POS, s) and not re.search(URGENT_NEG, s)) or
+                                           (re.search(FRAGILE_POS, s) and not re.search(FRAGILE_NEG, s))):
+            lab = None     # (vòng private) bảng gán 0 cho bản GÕ SAI hiếm gặp ("ang can gap lam", "hng de vo, di can than")
         how = "bảng"
         if lab is None:
             how = "bảng mờ"
@@ -2129,6 +2171,9 @@ class MissionParser2:
                         best, bl = d, l
             if bl is not None and best <= 2:
                 lab = bl
+            if FLAG_TYPO_FIX and lab == 0 and ((re.search(URGENT_POS, s) and not re.search(URGENT_NEG, s)) or
+                                               (re.search(FRAGILE_POS, s) and not re.search(FRAGILE_NEG, s))):
+                lab = None     # (vòng private) bảng có nhãn nhiễu cho bản gõ sai ("can ngay rtong 5 phut" = 0): dấu hiệu cờ rõ thì theo luật
         parts = re.split(r"[:,] ", s)
         if lab is None and PART_OR and len(parts) > 1:
             # câu nhiều vế ("hàng dễ vỡ, <vế lạ>"): xét TỪNG vế rồi gộp (trước đây chỉ lấy nhãn của vế đã học, bỏ qua vế lạ)

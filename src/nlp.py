@@ -135,6 +135,7 @@ def dl_distance(a, b, maxd=2):
 
 FUZZY_COMMON = 100   # từ gặp >= 100 lần trong dữ liệu học không được coi là bản gõ sai của tên gọi; None = tắt
 ONE_WORD_LAX = True  # trừ khi tên gọi nhiều từ và chỉ đúng một từ lệch
+SHORT_LAX_FIX = True  # (vòng private) không nới cho từ lệch ngắn (< 4 chữ): "an tap" ~ "san tap"
 
 
 class Lexicon:
@@ -172,6 +173,10 @@ class Lexicon:
         # ("hong lab" ~ "phong lab": "hong" là từ thật nhưng "lab" khớp đúng). Cụm quen thuộc vẫn bị chặn ở cuối hàm.
         ndiff = sum(1 for w, a in zip(wt, at) if w != a)
         lax = ONE_WORD_LAX and len(at) >= 2 and ndiff == 1
+        if lax and SHORT_LAX_FIX and any(len(w) < 4 for w, a in zip(wt, at) if w != a):
+            # (vòng private) từ lệch NGẮN và thông dụng không được nới: "phòng ĂN tập thể" -> "an tap" ~ "san tap" (sân tập) là sai;
+            # "hong lab" ~ "phong lab" (từ lệch 4 chữ) vẫn được
+            lax = False
         for w, a in zip(wt, at):
             if w == a:
                 continue

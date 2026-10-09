@@ -1,6 +1,6 @@
 import json 
-OLD_FILE = "F:\Research\Phenikaa_Campus_Courier_2026\AI\outputs\private_result\predictions_p11_goaltype.json"
-NEW_FILE = "F:\Research\Phenikaa_Campus_Courier_2026\AI\outputs\private_result\predictions_p11_goaltype.json"
+OLD_FILE = "F:\Research\Phenikaa_Campus_Courier_2026\AI\outputs\private_result\predictions_p17_hyper.json"
+NEW_FILE = "F:\Research\Phenikaa_Campus_Courier_2026\AI\outputs\private_result\predictions.json"
 
 ROBOTS_PER_MAP = 10 
 with open(OLD_FILE, "r", encoding="utf-8") as f:
