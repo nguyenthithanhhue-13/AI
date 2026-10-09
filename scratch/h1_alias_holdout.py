@@ -79,7 +79,9 @@ for k in folds:
         nlp2._KW0, nlp2._PL0, nlp2._PM0 = _kw0, _pl0, _pm0
         nlp2.KEYWORDS = {t: [(pt, w) for pt, w in v if not any(re.search(pt, a) for a in held)] for t, v in _kw0.items()}
         un = lambda s: norm(s)
-        for d, d0 in ((nlp_knowledge.PLACES, _pl0), (nlp_knowledge.PLACES_MORE, _pm0)):
+        _pd0 = getattr(nlp2, "_PD0", None) or {t: list(v) for t, v in nlp_knowledge.PLACES_DESC.items()}
+        nlp2._PD0 = _pd0
+        for d, d0 in ((nlp_knowledge.PLACES, _pl0), (nlp_knowledge.PLACES_MORE, _pm0), (nlp_knowledge.PLACES_DESC, _pd0)):
             d.clear()
             d.update({t: [x for x in v if not any(a in un(x) or un(x) in a for a in held)] for t, v in d0.items()})
     p = MissionParser2()
