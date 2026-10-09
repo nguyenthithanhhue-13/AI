@@ -1,5 +1,7 @@
 # Phenikaa Campus Courier v2 — lời giải
 
+> **Vòng private test (08/10):** xem [VONG_PRIVATE.md](VONG_PRIVATE.md) — pipeline `src/pipeline_p2.py`, kết quả trong `outputs/private_result/`.
+
 ## Tóm tắt bài
 
 - Có 10 robot, mỗi robot có một chiến thuật di chuyển cố định. Mỗi **cảnh** gồm một ảnh sơ đồ campus và một yêu cầu
@@ -31,6 +33,24 @@ mission ──NLP──► (goal, via, tham chiếu, gấp, dễ vỡ) ───
 
 Chi tiết, số đo và phần "giảng lại cho đội" nằm trong [GIAI_THICH.md](GIAI_THICH.md).
 
+## Cập nhật mới nhất (06/10): train và validation đều 100%
+
+Xem [CAP_NHAT_06-10.md](CAP_NHAT_06-10.md). Tóm tắt: thêm 4 CNN nhỏ (đoạn đường, giao lộ có lớp "không phải giao lộ",
+chú giải, thời tiết), sửa cách tìm biểu tượng thời tiết, sửa lỗi gõ chỉ hướng / "không" / tên gọi lệch một từ.
+Validation (CV thật + NLP chỉ học train): **1,0000**; train (cấu hình nộp bài): **1,0000**; NLP giấu tên gọi: 0,9973.
+v19 được **0,9778** trên bảng xếp hạng. Lượt 2–3 (06/10): NLP chịu được khung câu mới tự soạn (`scratch/h27_paraphrase.py`:
+146 phép thử đạt 1,0000), CNN đoạn đường học thêm ảnh làm méo mạnh, chiến thuật robot được xác nhận "ghim" chặt
+(`scratch/h26_policy_margin.py`).
+Lượt 4 (06/10 chiều, xem đầu CAP_NHAT_06-10.md): đoán loại tên gọi mới (`TYPE_FIX`), món hàng không cướp vai địa điểm /
+không mang cờ (`ITEM_FIX`), tắt cờ dễ vỡ do riêng mô hình nghĩa e5 bật (`E5_POS_FRAGILE`), "bên tay phải" / "mé trái"
+(`SPATIAL_FIX2`). Validation đo công bằng nhất (CV dev + NLP chỉ học train, `scratch/h34_fair_e2e.py`): **1,0000**.
+Bảng xếp hạng: v31c = 0,9733 (< v28 = 0,9778) cho thấy cờ dễ vỡ do e5 bật trên test phần lớn đúng -> đã bật lại (v32a).
+Lượt 5 (06/10 khuya, xem đầu CAP_NHAT_06-10.md): phép thử mới đặt tên lạ vào câu validation thật
+(`scratch/h48_alias_swap.py`) tìm ra các lỗi hệ thống về tham chiếu rõ ràng, chọn cặp đích / điểm ghé, khung "Hàng cho X:",
+dấu tiếng Việt khử nhập nhằng, ranh giới tên, cờ dễ vỡ cách nói mới.
+File nộp mới: `outputs/predictions.json` (xem bảng "Điểm bảng xếp hạng" bên dưới). Các bảng kết quả validation bên dưới là
+số đo cũ.
+
 ## Kết quả đo trên validation (macro accuracy)
 
 Khi dự đoán không dùng `scenes.json`. CV học trên train. NLP đo theo hai cách: "5-fold" (mỗi câu được đọc bởi mô hình
@@ -55,7 +75,29 @@ bản đồ; độ đúng của bước đó trên test không đo được. Xem
 | file trong `outputs/cac_ban_nop_cu/` | nội dung | điểm bảng xếp hạng |
 |---|---|---|
 | `predictions_v2_lb0.9322.json` | NLP bản 2 (tìm tên gọi lạ theo ngữ cảnh + từ khóa + bản đồ) | **0,9322** (robot yếu nhất 0,8611) |
-| `predictions_v4_e5_cnn.json` (= `predictions.json`) | v3a + CNN nhỏ đọc nhãn địa điểm (ghép với MLP); validation "CV + mission đúng" 0,9887 → 0,9917 | chưa nộp |
+| **`predictions_v42_negscope.json`** (ứng viên) | v41 + đợt 20b (`src/nlp2.py` hiện tại; mã v41: `nlp2_v41_src.py.bak`): chặn phần đổi giới từ khi nó làm kết quả kém hợp lý (`CANON_GUARD`), phạm vi phủ định "không cần / đừng" (`NEG_SCOPE_FIX` + `SCOPE_GUARD`), lưới an toàn đích (`GOAL_PLAUS_GUARD`, `GOAL_GUARD`). Khác v41: 7 bản đồ / 32 dòng; khác v35: 21 bản đồ / 114 dòng. `python src/pipeline.py test final` (xóa `cache/nlp2_test_final_final.pkl`) cho đúng v42 | chưa nộp |
+| `predictions_v41_negref.json` | v35 + đợt 20 (xem dòng dưới) | **0,9900** (robot yếu nhất 0,9833) |
+| `predictions_v41_negref.json` (mô tả cũ) | v35 + đọc câu đợt 20 (`src/nlp2.py`; mã v35: `nlp2_v35_src.py.bak`): tham chiếu gần / xa BỊ PHỦ ĐỊNH ("X không xa Y" = gần, "không ở gần Y" = xa — 0 câu trong train + validation, bộ phân loại đọc ngược; `REF_NEG_FIX`), giới từ "sang / vào / về / ra" (`PREP_CANON`) và các sửa tổng quát khác (CAP_NHAT đợt 20). Bản đồ test + bộ đọc đã lưu của v35. Khác v35: 20 bản đồ / 120 dòng | chưa nộp |
+| `predictions_v40_cv_multi.json` | v35 + CV tăng cường NHIỀU LỚP (đợt 19, `scratch/make_v40.sh`): CNN tinh chỉnh trên ảnh xoay / thu nhỏ / mất độ phân giải / mờ / đổi màu-tương phản / nhiễu / JPEG chồng nhau, MLP căn tâm + giao lộ học lại, CNN đọc mọi đoạn đường, gộp CNN đoạn đường cũ + mới (`models_finalm`). Bền hơn hẳn trên validation làm méo nặng; trên test chỉ đổi 2 bản đồ (đoạn đường) và **0 dòng dự đoán** -> trùng v35 (xem CAP_NHAT đợt 19) | không nộp (= v35) |
+| `predictions_v39_refit_vote.json` | v35 + bỏ phiếu giữa 7 lần học lại bộ đọc câu: khác v35 1 cảnh / 5 dòng (tung đồng xu) | không nộp |
+| `predictions_v38_tta_vote.json` | v35 + bỏ phiếu CV đa nhiễu: trùng v35 | không nộp |
+| `predictions_v35_cand.json` (= `predictions.json`) | v34c, bộ đọc học lại bằng mã mới | **0,9828** (robot yếu nhất 0,9722) — bài được tính |
+| `predictions_v36C.json`, `predictions_v36A.json` | A/B: tắt `CACH_RULE` + `GOAL_FRAME_RULE` + `REACH_RULE` / tắt `NEW_FRAME_FIX` | 0,9772 / 0,9800 (các luật đó ĐÚNG trên test) |
+| `predictions_v34c_spans_flags.json` | v33 + đợt 17: sửa lỗi của v33 ("Nhớ né X ra" bị thành điểm ghé), khung "Điểm giao: X.", chủ ngữ "Ban quản lý / Cán bộ <nơi>", cụm món hàng không phải địa điểm ("trứng gà"), "cổng phía trước", "trạm xá", dấu khử nhập nhằng ở mép tên, cờ dễ vỡ / gấp cách nói mới (mã mới + bộ đọc đã học của v32b). Khác v32b: 45 dòng / 16 cảnh | **0,9828** |
+| `predictions_v33_ref_frames_flags.json` | v32b + lượt 5 (CÓ LỖI "né X" -> thay bằng v34c): tham chiếu rõ ràng, chọn cặp đích / điểm ghé, khung "Hàng cho X:", dấu khử nhập nhằng, ranh giới tên, cờ cách nói mới (mã mới + bộ đọc đã học của v32b). Khác v32b: 35 dòng / 11 cảnh | chưa nộp |
+| `predictions_v33r_refit.json` | như v33 nhưng học lại bộ đọc bằng mã mới: thêm 4 cảnh đổi do các quyết định vai trò sát nút (≈ tung đồng xu). Khác v32b: 56 dòng / 15 cảnh | dự phòng |
+| `predictions_v32b_cv_strong_final.json` (= v32a) | v32a + hai CNN chú giải / giao lộ mới (làm méo mạnh): bản đồ test không đổi | **0,9828** (cao nhất) |
+| `predictions_v32a_nlp_via_e5on.json` | v31c nhưng BẬT LẠI cờ dễ vỡ của e5 + `VIA_FIX` (dấu ";" là ranh giới vế, phủ định / "khỏi" / "chớ", "từ X sang Y"...). Khác v28: 92 dòng / 20 cảnh | (= v32b) |
+| `predictions_v31c_items_spatial_e5frag.json` | v30 + tắt cờ dễ vỡ do riêng e5 bật + "bên tay phải" / "mé" + sửa hồi quy "giao là X ở", "đến tận X" (khác v28: 64 dòng / 50 cảnh, 44 dòng của robot 7) | **0,9733** (tắt cờ e5 là sai) |
+| `predictions_v30_typing_items.json` | v28 + đoán loại tên mới + món hàng (khác v28: 37 dòng / 11 cảnh; có hồi quy nhỏ đã sửa ở v31) | không nộp |
+| `predictions_v29_fragile_ambiguity.json` | v28 + cờ dễ vỡ theo ngữ cảnh ("cẩn thận kẻo trễ") — trùng v28 trên test | không nộp |
+| `predictions_v28_appositive.json` (= v27c = v27 trên test) | v26 + khung nhãn thứ tự cho mọi vai trò, "A trước, B sau", "đến X lấy" (trừ khi người nhận tự tới), đồng vị ngữ "X, nơi…" (khác v26 ở 2 cảnh test) | **0,9778** |
+| `predictions_v26_order_frames.json` | v23 + lỗi gõ theo cặp từ / dấu, câu tương phản, gây nhiễu mới, thứ tự hai chặng (khác v23 ở 2 cảnh test) | chưa nộp |
+| `predictions_v23_typing_knn_desc_more2.json` (= v24 = v25 trên test) | v22 + đoán loại tên mới (láng giềng + mô tả + CTX 0,8) + kho tên 750 mục | chưa nộp |
+| `predictions_v22_nlp_newframes_edgestrong.json` | v19 + NLP khung câu mới / lỗi gõ chữ then chốt + CNN đoạn đường làm méo mạnh + sửa CV lượt 2 | chưa nộp |
+| `predictions_v21_nlp_frames_knowledge.json` | v19 + NLP dò tên lạ theo khung câu + ~350 cách gọi viết tay | chưa nộp |
+| `predictions_v19_cnn_cv_typo.json` | 4 CNN cho CV + sửa lỗi gõ NLP; train và validation 1,0000 | **0,9778** |
+| `predictions_v4_e5_cnn.json` | v3a + CNN nhỏ đọc nhãn địa điểm (ghép với MLP); validation "CV + mission đúng" 0,9887 → 0,9917 | chưa nộp |
 | `predictions_v3a_e5_negation.json` | thêm mô hình nghĩa pretrained e5 cho tên gọi lạ và câu gấp / dễ vỡ; thời tiết chỉ lấy từ biểu tượng | chưa nộp |
 | `predictions_v3b_no_generic_negation.json` | như v3a nhưng tắt luật "từ phủ định chung" | chưa nộp |
 
@@ -69,7 +111,7 @@ Cần thêm thư viện `onnxruntime`, `tokenizers`, `huggingface_hub` và tải
 ## Tuân thủ quy định
 
 - Dự đoán chạy hoàn toàn offline (numpy, OpenCV, scikit-learn); không gọi API nào.
-- Tổng tham số 128.156.710 (giới hạn 200 triệu), gồm mô hình pretrained công khai multilingual-e5-small (117.653.760) chạy offline bằng onnxruntime.
+- Tổng tham số 131.244.682 (giới hạn 200 triệu), gồm mô hình pretrained công khai multilingual-e5-small (117.653.760) và 4 CNN nhỏ, tất cả chạy offline bằng onnxruntime.
 - Test chỉ được dùng để chạy dự đoán: không huấn luyện, không dò tham số, không đọc câu hay xem ảnh test, không bổ sung
   từ điển từ test. Bảng từ khóa tiếng Việt trong `nlp2.py` được viết từ kiến thức ngôn ngữ chung và từ train/validation.
   Thứ duy nhất lấy từ lượt chạy test là các **bộ đếm tổng hợp** do `check_submission.py` in ra (ví dụ "bao nhiêu % cảnh có
@@ -85,7 +127,8 @@ Windows, Python 3.13, chỉ cần CPU.
 pip install numpy opencv-python pillow scipy scikit-learn
 ```
 
-Không dùng PyTorch (máy này bị Windows Application Control chặn DLL của torch, nên toàn bộ mạng nơ-ron được viết bằng numpy).
+Khi dự đoán không cần PyTorch (MLP viết bằng numpy, CNN chạy bằng onnxruntime). PyTorch bản CUDA chỉ cần để huấn luyện
+lại các CNN; trên máy này nó được cài ở `F:\pylibs` (xem [CAP_NHAT_06-10.md](CAP_NHAT_06-10.md)).
 
 ## Chạy lại từ đầu
 
@@ -111,8 +154,19 @@ Lưu ý: muốn chạy lại một bước sau khi sửa code thì xóa file cac
 (`det_*.pkl` = kết quả bộ dò, `world_*.pkl` = world cuối, `nlp2_*.pkl` = mission đã đọc) và `outputs/nlp2_final.pkl`
 (mô hình NLP cuối). `run_cv.py` luôn tính lại `world_*.pkl` nhưng dùng lại `det_*.pkl` nếu có.
 
-File nộp: `outputs/predictions.json` (bản mới nhất, giống `predictions_v4_e5_cnn.json`). Bản cũ để so sánh trên bảng xếp hạng nếu muốn:
+File nộp: `outputs/predictions.json` = `outputs/cac_ban_nop_cu/predictions_v35_cand.json` (bài được tính, 0,9828). Tạo lại
+từ mô hình đã lưu (`outputs/models_final/`, `outputs/nlp2_final.pkl`, `outputs/e5_small/`): `python src/pipeline.py test final`
+(nhớ xóa `cache/det_test_final.pkl`, `cache/world_test_final.pkl`, `cache/nlp2_test_final_final.pkl` nếu muốn tính lại từ
+đầu). Kiểm tra tái lập không đụng tới cache / file nộp: `PROCS=6 python scratch/h87_repro.py` (chạy lại toàn bộ suy luận
+dưới tên tạm `finalrep` rồi so từng dòng với v35). Các bước huấn luyện CNN ở CAP_NHAT_06-10.md. Bản cũ để so sánh:
 `outputs/cac_ban_nop_cu/predictions_v1_nlp_lexicon_only.json` (NLP bản đầu, chỉ nhận tên gọi đã có trong từ điển).
+Phần tăng cường nhiều lớp của đợt 19 (`cv_data.py ... multi`, `scratch/train_multi.sh`, `models_finalm`, `EDGE_CNN_TH`,
+`edge2/`) là tùy chọn, KHÔNG dùng trong bài nộp (mặc định của mã vẫn cho đúng v35).
+
+Ứng viên v41 (đợt 20): `src/nlp2.py` hiện là mã đợt 20. Tạo lại `predictions_v41_negref.json` từ bản đồ test đã tính +
+bộ đọc đã lưu: `python scratch/make_v41.py v41_negref` (bước (a); bước (b) học lại bộ đọc chỉ để đối chiếu — học lại
+bằng mã v35 gốc cũng lệch 4 bản đồ so với bộ đọc đã lưu, nên luôn dùng `outputs/nlp2_final.pkl`). Với mã đợt 20,
+`python src/pipeline.py test final` (sau khi xóa `cache/nlp2_test_final_final.pkl`) cho đúng v41.
 
 ## Cấu trúc thư mục
 

@@ -14,6 +14,8 @@ REL = [[rel_turn(h, d) for d in range(4)] for h in range(4)]
 
 def resolve_targets(world, typ, ref):
     """Danh sách giao lộ ứng viên cho một loại địa điểm, đã áp dụng tham chiếu không gian (nếu có)."""
+    if ref is not None and ref[0] == "pos":        # (vòng private) đích đã chốt theo vị trí trên bản đồ (src/nlp3.py)
+        return [tuple(ref[1])]
     cands = list(world["landmarks"].get(typ, []))
     if len(cands) <= 1 or ref is None:
         return cands

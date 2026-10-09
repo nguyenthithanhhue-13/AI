@@ -29,16 +29,34 @@ class Models:
     def __init__(self, folder):
         for n in self.NAMES:
             setattr(self, n, MLP.load(folder / f"{n}.npz"))
+        # CNN đoạn đường (nếu đã huấn luyện): thay cho MLP `edge` vì sai ít hơn nhiều (bậc thang, một chiều)
+        self.edge_cnn = None
+        if (folder / "edge_cnn.onnx").exists() and os.environ.get("NO_EDGE_CNN") != "1":
+            from cv_edge import EdgeCNN
+            self.edge_cnn = EdgeCNN(folder / "edge_cnn.onnx")
+        # (đợt 19) CNN đoạn đường thứ hai (thư mục con edge2/, nếu có): lấy TRUNG BÌNH xác suất với CNN chính.
+        # Bản cũ (học ảnh sạch + làm méo mạnh) đúng tuyệt đối trên ảnh sạch; bản mới (tăng cường nhiều lớp) bền hơn hẳn khi
+        # ảnh méo lạ. Trung bình: mảnh validation sạch 0 / 0 / 0 lỗi, mảnh tăng cường nhiều lớp 5 / 7 / 11 (cũ 77 / 84 / 29).
+        self.edge_cnn2 = None
+        if self.edge_cnn is not None and (folder / "edge2" / "edge_cnn.onnx").exists() and os.environ.get("NO_EDGE_CNN2") != "1":
+            from cv_edge import EdgeCNN
+            self.edge_cnn2 = EdgeCNN(folder / "edge2" / "edge_cnn.onnx")
+        if (folder / "weather_cnn.onnx").exists() and os.environ.get("NO_WEATHER_CNN") != "1":
+            from cv_weather import WeatherCNN
+            self.weather = WeatherCNN(folder / "weather_cnn.onnx")
+        # CNN đọc chú giải (nếu đã huấn luyện): sai ít hơn MLP hàng chục lần ở phần đọc chữ
+        if (folder / "swatch_cnn.onnx").exists() and os.environ.get("NO_SWATCH_CNN") != "1":
+            from cv_swatch import SwatchCNN
+            self.swatch = SwatchCNN(folder / "swatch_cnn.onnx")
         # CNN phân loại giao lộ (nếu đã huấn luyện): thay cho cặp "căn tâm + MLP" vì chịu được tâm lệch
         self.node_cnn = None
-        import os
         if (folder / "node_cnn.onnx").exists() and os.environ.get("NO_NODE_CNN") != "1":
             from cv_cnn import NodeCNN
             self.node_cnn = NodeCNN(folder / "node_cnn.onnx")
 
     @property
     def n_params(self):
-        return sum(getattr(self, n).n_params for n in self.NAMES)
+        return sum(getattr(self, n).n_params for n in self.NAMES)    # (edge đã là CNN nếu có: EdgeCNN.n_params)
 
 
 def dense_detect(im, model, rows_per_chunk=16):
@@ -361,6 +379,56 @@ def detect(im, models):
             "weather": peaks(heat[..., 5], step, thr=0.2, rad=4)}
 
 
+WEATHER_FIX = True
+
+
+def _median_nn(pts):
+    """Khoảng cách tới láng giềng gần nhất (trung vị) của một tập đỉnh (x, y, score)."""
+    if len(pts) < 3:
+        return 100.0
+    a = np.array([(p[0], p[1]) for p in pts])
+    d = np.hypot(a[:, None, 0] - a[None, :, 0], a[:, None, 1] - a[None, :, 1])
+    np.fill_diagonal(d, 1e9)
+    return float(np.median(d.min(1)))
+
+
+NODE_FILTER = True
+BG_THR = 0.5
+GRID_FILL = True       # lấp ô trống của lưới bằng CNN giao lộ
+GRID_FILL_THR = 0.5
+COLOR_FLOOR = 0.02     # trước 1e-4
+EDGE_CNN_RARE = True   # đoạn MLP đọc là đóng / một chiều / bậc thang: luôn hỏi lại CNN
+# (kiểu nét, bậc thang, một chiều). CNN đoạn đường học thêm ảnh làm méo mạnh (cv_data.py train strong): validation ảnh gốc
+# 300/300, ảnh mờ 1.0 + JPEG 40 chỉ 1 lỗi bậc thang (CNN cũ: 20 + 6 một chiều) -> lấy thẳng CNN, không trung bình với MLP
+EDGE_HEAD_MODE = os.environ.get("EDGE_HEAD_MODE", "cnn,cnn,cnn").split(",")
+EDGE_CNN_TH = float(os.environ.get("EDGE_CNN_TH", "0.999"))   # MLP chắc chắn hơn mức này thì tin luôn; còn lại hỏi CNN
+# (đợt 19: EDGE_CNN_TH=2 -> CNN đọc MỌI đoạn; dưới tương phản / gamma lạ MLP sai rất tự tin nên không hỏi CNN)
+# Trọng số của CNN khi ghép với MLP ở bước phân loại giao lộ (1 = chỉ CNN). CNN đúng gần như mọi ca mà MLP đọc sai,
+# nên nó phải nặng hơn hẳn; nhưng bỏ hẳn MLP lại tệ đi (train 0,9963), nên giữ một phần nhỏ.
+# Đo trên train (2.000 cảnh): 0,5 -> 0,9977 · 0,8 -> 0,9999 · 0,85 -> 0,9999 · 1,0 -> 0,9963; validation 1,0000 với 0,8-0,9.
+NODE_CNN_W = 0.8
+NODE_TTA = False      # (đã thử: đọc mỗi giao lộ ở vài vị trí / cỡ lệch rồi lấy trung bình -> kết quả y hệt, chậm 4 lần)
+
+
+def drop_nonnodes(im, models, nodes, thr=BG_THR):
+    """Loại các đỉnh dò mà CNN giao lộ (lớp 15) cho là KHÔNG phải giao lộ: chữ tiêu đề, vạch bậc thang, mũi tên...
+    Một đỉnh báo nhầm nằm lọt vào lưới làm lệch chỉ số hàng/cột của cả bản đồ."""
+    cnn = models.node_cnn
+    if not NODE_FILTER or cnn is None or cnn.n_classes <= 15 or len(nodes) < 6:
+        return nodes, []
+    unit0 = _median_nn(nodes)
+    pn = cnn.p_not_node(np.array([im.node_crop(p[0], p[1], unit0) for p in nodes]))
+    keep = [p for p, q in zip(nodes, pn) if q < thr]
+    if len(keep) < max(6, 0.6 * len(nodes)):       # lọc quá tay -> bỏ qua, giữ nguyên
+        return nodes, []
+    return keep, [p for p, q in zip(nodes, pn) if q >= thr]
+
+
+def _in_box(sw, pt, mx=40, my=34):
+    sx = [p[0] for p in sw]; sy = [p[1] for p in sw]
+    return min(sx) - mx <= pt[0] <= max(sx) + 60 and min(sy) - my <= pt[1] <= max(sy) + my
+
+
 def analyze(rgb, models, det=None):
     im = Img(rgb)
     if det is None:
@@ -368,6 +436,7 @@ def analyze(rgb, models, det=None):
     all_nodes = [p for p in det["nodes"] if p[2] > 0.5]
     nodes = all_nodes
     wpk = det["weather"]
+    wpk_all = det["weather"]
     sw, weather_row = find_legend_rows(im, models, det)
     info = {}
     if sw:      # vùng chú giải: loại các "giao lộ" nằm trong đó
@@ -383,18 +452,28 @@ def analyze(rgb, models, det=None):
     # biểu tượng thời tiết: nằm ngay trong dòng "Thời tiết" của chú giải, HOẶC ở một góc ảnh
     if weather_row is not None:
         wx, wy = weather_row
-    elif wpk:
-        wx, wy, wscore = max(wpk, key=lambda t: t[2])
-        if wscore > 0.5:
-            nodes = [p for p in nodes if np.hypot(p[0] - wx, p[1] - wy) > 45]
     else:
-        wx, wy = im.w - 70, 50
+        # Biểu tượng thời tiết chỉ có hai chỗ: một dòng trong chú giải, hoặc góc trên bên phải ảnh (x/W 0.9-0.97, y/H 0.02-0.09
+        # trên 100% ảnh train + validation). Đĩa vàng của robot trông giống mặt trời nên bộ dò hay gán "thời tiết" cho robot:
+        # vì vậy chỉ nhận đỉnh nằm ở góc hoặc trong khung chú giải.
+        def corner(p):
+            return p[0] > 0.84 * im.w and p[1] < 0.14 * im.h
+        elig = [p for p in wpk_all if p[2] > 0.3 and (corner(p) or (sw and _in_box(sw, (p[0], p[1]))))] if WEATHER_FIX else wpk
+        if elig:
+            wx, wy, wscore = max(elig, key=lambda t: t[2])
+            if wscore > 0.5 and not (WEATHER_FIX and sw and _in_box(sw, (wx, wy))):
+                nodes = [p for p in nodes if np.hypot(p[0] - wx, p[1] - wy) > 45]
+        else:
+            wx, wy = (0.935 * im.w, 0.055 * im.h) if WEATHER_FIX else (im.w - 70, 50)
 
     # đỉnh yếu (điểm 0.3-0.5) của bộ dò: chỉ dùng để lấp các ô lưới còn trống (vd: nhãn chữ bị xoay nghiêng)
     weak = [p for p in det["nodes"] if 0.3 <= p[2] <= 0.5
             and not (sw and inside(p)) and all(np.hypot(p[0] - q[0], p[1] - q[1]) > 30 for q in nodes)]
+    nodes, dropped = drop_nonnodes(im, models, nodes)
+    weak = [p for p in weak if p not in dropped]
     legend = None
-    for attempt in range(4):
+    filled = False
+    for attempt in range(5):
         pts = np.array([(p[0], p[1]) for p in nodes])
         rows, cols, theta, spacing = fit_lattice(pts)
         cell = {}       # mỗi ô lưới giữ một điểm (điểm số cao nhất)
@@ -422,6 +501,26 @@ def analyze(rgb, models, det=None):
                 nodes = nodes + added
                 weak = []
                 continue
+        if GRID_FILL and not filled and len(cell) >= 6 and models.node_cnn is not None and models.node_cnn.n_classes > 15:
+            # Ô trống bên trong lưới: hỏi thẳng CNN giao lộ tại vị trí lưới dự đoán. Bộ dò có thể bỏ sót hẳn một giao lộ
+            # (nhãn địa điểm cạnh dấu X, ảnh nén JPEG mạnh). Trên 1.567 ô trống thật (train + validation, cả khi nén JPEG 35)
+            # CNN cho p(không phải giao lộ) >= 0.935, còn 95% giao lộ thật < 0.5 (scratch/h25_gridfill_probe.py).
+            filled = True
+            RC = np.array([[rc[1], rc[0], 1.0] for rc in cell]); XY = np.array([(p[0], p[1]) for p in cell.values()])
+            coef, *_ = np.linalg.lstsq(RC, XY, rcond=None)
+            u = float(np.median([np.hypot(*coef[0]), np.hypot(*coef[1])]))
+            r0, r1 = min(r for r, _ in cell), max(r for r, _ in cell)
+            c0, c1 = min(c for _, c in cell), max(c for _, c in cell)
+            empty = [(r, c) for r in range(r0, r1 + 1) for c in range(c0, c1 + 1) if (r, c) not in cell]
+            if empty:
+                P = np.array([[c, r, 1.0] for r, c in empty]) @ coef
+                ok_pos = [k for k, (x, y) in enumerate(P) if 0 <= x < im.w and 0 <= y < im.h and not (sw and inside((x, y)))]
+                if ok_pos:
+                    pn = models.node_cnn.p_not_node(np.array([im.node_crop(P[k][0], P[k][1], u) for k in ok_pos]))
+                    add = [(float(P[k][0]), float(P[k][1]), 0.5) for k, q in zip(ok_pos, pn) if q < GRID_FILL_THR]
+                    if add:
+                        nodes = nodes + add
+                        continue
         rcs = sorted(cell)
         xy = {rc: (cell[rc][0], cell[rc][1]) for rc in rcs}
         unit = grid_unit(rcs, [xy[rc] for rc in rcs]) if len(rcs) >= 4 else float(min(spacing))
@@ -438,7 +537,30 @@ def analyze(rgb, models, det=None):
                     pairs.append((rc, rc2, d))
         adj = defaultdict(dict)
         if pairs:
-            EP = models.edge.predict_proba(np.array([im.edge_crop(xy[a], xy[b], unit) for a, b, d in pairs]))
+            crops = np.array([im.edge_crop(xy[a], xy[b], unit) for a, b, d in pairs])
+            EP = models.edge.predict_proba(crops)
+            if models.edge_cnn is not None:
+                # CNN đọc đoạn đường chính xác hơn nhiều (0 lỗi / 26.738 mảnh validation so với 1 / 10 / 16 của MLP) nhưng
+                # chậm hơn ~50 lần trên CPU: chỉ dùng nó cho những đoạn mà MLP KHÔNG chắc (thường dưới 2% số đoạn).
+                need = np.zeros(len(pairs), bool)
+                for head in EP:
+                    need |= head.max(1) < EDGE_CNN_TH
+                if EDGE_CNN_RARE:
+                    # kết luận hiếm mà hệ trọng (đóng / một chiều / bậc thang) luôn được CNN đọc lại: MLP có khi sai mà rất
+                    # tự tin (val cảnh 75, kiểu print bị mờ: đoạn thường -> "đóng" với xác suất 0.999)
+                    need |= (EP[0].argmax(1) == LOOKS.index("closed")) | (EP[1][:, 1] > 0.5) | (EP[2].argmax(1) != 2)
+                if need.any():
+                    CP = models.edge_cnn.predict_proba(crops[need])
+                    if models.edge_cnn2 is not None:
+                        CP = [(a + b) / 2 for a, b in zip(CP, models.edge_cnn2.predict_proba(crops[need]))]
+                    for k, head in enumerate(EP):
+                        # theo từng đầu ra: "cnn" = thay bằng CNN, "avg" = trung bình MLP và CNN.
+                        # CNN đọc kiểu nét tốt hơn hẳn, nhưng với ảnh mờ (sigma 1) nó đọc bậc thang / một chiều kém MLP
+                        # (scratch/h24_cv_stress.py blur=1.0 jpeg=40)
+                        if EDGE_HEAD_MODE[k] == "avg":
+                            head[need] = 0.5 * (head[need] + CP[k])
+                        else:
+                            head[need] = CP[k]
             for (a, b, d), pl, ps, po in zip(pairs, *EP):
                 lk = LOOKS[int(np.argmax(pl))]
                 if lk == "none":
@@ -462,6 +584,12 @@ def analyze(rgb, models, det=None):
     crops = np.array([im.node_crop(xy[rc][0], xy[rc][1], unit) for rc in rcs])
     NP = models.node.predict_proba(crops)[0]
     NPc = models.node_cnn.predict_proba(crops) if models.node_cnn is not None else None
+    if NPc is not None and NODE_TTA:
+        # đọc thêm ở vài vị trí lệch nhẹ và vài cỡ khác rồi lấy trung bình: bù cho việc tâm của bộ dò không chính xác
+        for dx, dy, su in ((-0.05, 0, 1.0), (0.05, 0, 1.0), (0, -0.05, 1.0), (0, 0.05, 1.0), (0, 0, 0.93), (0, 0, 1.07)):
+            NPc = NPc + models.node_cnn.predict_proba(
+                np.array([im.node_crop(xy[rc][0] + dx * unit, xy[rc][1] + dy * unit, unit * su) for rc in rcs]))
+        NPc /= NPc.sum(1, keepdims=True)
     todo = [i for i in range(len(rcs)) if NP[i, 0] < 0.9 or (NPc is not None and NPc[i, 0] < 0.9)]
     if todo:
         cxy = {i: xy[rcs[i]] for i in todo}
@@ -470,15 +598,25 @@ def analyze(rgb, models, det=None):
             A = models.align.predict_proba(np.array([im.node_crop(cxy[i][0], cxy[i][1], unit)[3024:] for i in todo]))
             for i, px, py in zip(todo, A[0], A[1]):
                 cxy[i] = (cxy[i][0] - float(bins[px.argmax()]), cxy[i][1] - float(bins[py.argmax()]))
-        NP2 = models.node.predict_proba(np.array([im.node_crop(cxy[i][0], cxy[i][1], unit) for i in todo]))[0]
+        crops2 = np.array([im.node_crop(cxy[i][0], cxy[i][1], unit) for i in todo])
+        NP2 = models.node.predict_proba(crops2)[0]
         xy = dict(xy)
         for i, p in zip(todo, NP2):
             NP[i] = p
             xy[rcs[i]] = cxy[i]            # tâm đã căn: dùng cho việc so màu với mẫu trong chú giải
+        if NPc is not None:
+            # CNN đọc thêm một lần tại tâm ĐÃ CĂN rồi lấy lần đọc tự tin hơn: tâm của bộ dò có khi lệch 10-20px
+            # (nhãn chữ rộng của kiểu "print"), vượt quá biên độ lệch mà CNN được huấn luyện.
+            NPc2 = models.node_cnn.predict_proba(crops2)
+            for k, i in enumerate(todo):
+                if NPc2[k].max() > NPc[i].max():
+                    NPc[i] = NPc2[k]
     if NPc is not None:
         # CNN chịu được tâm lệch nên đọc tại vị trí bộ dò; ghép với MLP (đọc tại tâm đã căn) bằng trung bình hình học
         mode = os.environ.get("NODE_COMBINE", "both")
-        NP = NPc if mode == "cnn" else np.sqrt((NP + 1e-6) * (NPc + 1e-6))
+        # CNN sai ít hơn MLP hàng chục lần nên được cân nặng hơn trong trung bình hình học có trọng số
+        wc = float(os.environ.get("NODE_CNN_W", NODE_CNN_W))
+        NP = NPc if mode == "cnn" else (NPc + 1e-6) ** wc * (NP + 1e-6) ** (1 - wc)
         NP = NP / NP.sum(1, keepdims=True)
     ri = int(np.argmax(NP[:, 1:5].sum(1)))
     robot = rcs[ri]
@@ -505,7 +643,9 @@ def analyze(rgb, models, det=None):
             pc = np.zeros(10)
             for col_r, pk in rows_c:
                 pc += pk * np.exp(-np.abs(c - col_r).sum() / 12.0)
-            score += np.log(pc / (pc.sum() + 1e-12) + 1e-4)
+            # sàn COLOR_FLOOR: màu mẫu trong chú giải đọc lệch (ô màu nhỏ bị JPEG làm loang -> gần trắng) không được
+            # lật kết quả mà CNN đọc chữ rất chắc (val cảnh 190 khi nén JPEG 35: office -> lecture)
+            score += np.log(pc / (pc.sum() + 1e-12) + COLOR_FLOOR)
         if legend["types"] is not None:
             for t in range(10):
                 if PLACES[t] not in legend["types"]:

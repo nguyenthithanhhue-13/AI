@@ -4,6 +4,7 @@
     python src/cv_data.py validation
     python src/cv_data.py train 100        # thử nhanh trên 100 cảnh
 """
+import os
 import sys
 import time
 from multiprocessing import Pool
@@ -14,11 +15,161 @@ from common import *
 from cvfeat import *
 
 
+def degrade_strong(img, rng):
+    """Làm méo MẠNH hơn mức có trong train (validation đã méo hơn train: JPEG 45-75 so với 60-85; test có thể còn hơn):
+    chồng thêm mờ (sigma 0.6-1.6) và nén JPEG (chất lượng 25-65) lên ảnh (kể cả ảnh vốn đã méo)."""
+    out = img
+    if rng.random() < 0.7:
+        out = cv2.GaussianBlur(out, (0, 0), float(rng.uniform(0.6, 1.6)))
+    if rng.random() < 0.85:
+        q = int(rng.integers(25, 66))
+        ok, buf = cv2.imencode(".jpg", cv2.cvtColor(out, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, q])
+        out = cv2.cvtColor(cv2.imdecode(buf, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+    return out
+
+
+def degrade_multi(img, rng):
+    """(đợt 19) Tăng cường NHIỀU LỚP, mỗi lớp bật ngẫu nhiên rồi chồng lên nhau theo thứ tự của một ảnh chụp / quét thật:
+      1. hình học: xoay thêm tới 4,5 độ, thu nhỏ 0,8-1 (bản đồ dày hơn -> ký hiệu nhỏ hơn); nới khung để không mất nội dung
+      2. mất độ phân giải: thu nhỏ còn 0,55-0,9 rồi phóng lại
+      3. mờ: Gauss sigma 0,4-1,7 hoặc nhòe chuyển động 3-5px
+      4. màu: độ sáng, tương phản, gamma, độ bão hòa, lệch cân bằng trắng nhẹ (phép biến đổi chung cho cả ảnh, nên màu
+         của ký hiệu trên bản đồ và mẫu trong chú giải vẫn khớp nhau)
+      5. nhiễu hạt Gauss sigma 2-9
+      6. nén JPEG chất lượng 20-70, đôi khi nén hai lần
+    -> (ảnh, M): M (2x3) đưa tọa độ (x, y) của ảnh gốc sang ảnh mới."""
+    h, w = img.shape[:2]
+    ang = float(rng.uniform(-4.5, 4.5)) if rng.random() < 0.6 else 0.0
+    sc = float(rng.uniform(0.8, 1.0)) if rng.random() < 0.45 else 1.0
+    M = cv2.getRotationMatrix2D((w / 2, h / 2), ang, sc)
+    out = img
+    if ang or sc != 1.0:
+        corners = np.array([[0, 0, 1], [w, 0, 1], [0, h, 1], [w, h, 1]], np.float64) @ M.T
+        nw, nh = int(np.ceil(np.ptp(corners[:, 0]))), int(np.ceil(np.ptp(corners[:, 1])))
+        nw, nh = max(nw, int(w * sc) + 2), max(nh, int(h * sc) + 2)
+        M[0, 2] += nw / 2 - w / 2; M[1, 2] += nh / 2 - h / 2
+        border = tuple(int(x) for x in np.median(np.concatenate([img[0], img[-1], img[:, 0], img[:, -1]]), axis=0))
+        out = cv2.warpAffine(img, M, (nw, nh), flags=cv2.INTER_AREA if sc < 0.95 else cv2.INTER_LINEAR,
+                             borderMode=cv2.BORDER_CONSTANT, borderValue=border)
+    if rng.random() < 0.3:
+        hh, ww = out.shape[:2]
+        f = float(rng.uniform(0.55, 0.9))
+        small = cv2.resize(out, (max(8, int(ww * f)), max(8, int(hh * f))), interpolation=cv2.INTER_AREA)
+        out = cv2.resize(small, (ww, hh), interpolation=cv2.INTER_LINEAR)
+    r = rng.random()
+    if r < 0.55:
+        out = cv2.GaussianBlur(out, (0, 0), float(rng.uniform(0.4, 1.7)))
+    elif r < 0.65:
+        k = int(rng.integers(3, 6))
+        ker = np.zeros((k, k), np.float32); ker[k // 2, :] = 1.0 / k
+        R = cv2.getRotationMatrix2D(((k - 1) / 2, (k - 1) / 2), float(rng.uniform(0, 180)), 1.0)
+        ker = cv2.warpAffine(ker, R, (k, k)); ker /= max(ker.sum(), 1e-6)
+        out = cv2.filter2D(out, -1, ker)
+    if rng.random() < 0.6:
+        f = out.astype(np.float32)
+        f = (f - 128.0) * float(rng.uniform(0.75, 1.15)) + 128.0 + float(rng.uniform(-18, 18))
+        f = 255.0 * (np.clip(f, 0, 255) / 255.0) ** float(rng.uniform(0.8, 1.25))
+        gray = f.mean(2, keepdims=True)
+        f = gray + (f - gray) * float(rng.uniform(0.8, 1.15))
+        f = f * rng.uniform(0.95, 1.05, 3).astype(np.float32)
+        out = np.clip(f, 0, 255).astype(np.uint8)
+    if rng.random() < 0.35:
+        out = np.clip(out.astype(np.float32) + rng.normal(0, float(rng.uniform(2, 9)), out.shape), 0, 255).astype(np.uint8)
+    for _ in range(2 if rng.random() < 0.2 else 1):
+        if rng.random() < 0.85:
+            q = int(rng.integers(20, 71))
+            ok, buf = cv2.imencode(".jpg", cv2.cvtColor(out, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, q])
+            out = cv2.cvtColor(cv2.imdecode(buf, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+    return np.ascontiguousarray(out), M
+
+
+def warp_scene(s, M):
+    """Bản sao chú thích cảnh với mọi tọa độ pixel (tâm giao lộ, khung chú giải, khung thời tiết) đã qua phép biến đổi M."""
+    import copy
+    s = copy.deepcopy(s)
+    tp = lambda x, y: (float(M[0, 0] * x + M[0, 1] * y + M[0, 2]), float(M[1, 0] * x + M[1, 1] * y + M[1, 2]))
+
+    def box(b):
+        pts = [tp(b[0], b[1]), tp(b[2], b[1]), tp(b[0], b[3]), tp(b[2], b[3])]
+        return [min(p[0] for p in pts), min(p[1] for p in pts), max(p[0] for p in pts), max(p[1] for p in pts)]
+
+    for n in s["nodes"]:
+        n["xy"] = list(tp(*n["xy"]))
+    for l in s["legend"]:
+        l["swatch"] = box(l["swatch"]); l["label"] = box(l["label"])
+    s["weather_box"] = box(s["weather_box"])
+    return s
+
+
+MULTI_KEYS = STRONG_KEYS_ALL = ("edge_x", "edge_y", "cn_x", "cn_y", "sw_x", "sw_y", "we_x", "we_y",
+                                "det_x", "det_y", "node_x", "node_y", "al_x", "al_y")
+
+
+def build_multi(split="train", n=None, procs=7, aug=3):
+    """Bản tăng cường NHIỀU LỚP (degrade_multi) cho MỌI mô hình CV -> cache/cvmulti{aug-3 nếu > 0}_{split}.npz
+    (khóa của 4 CNN) và cache/cvmultimlp_{split}.npz (bộ dò / căn tâm / MLP giao lộ). Thu kết quả dần để không tràn RAM."""
+    scenes = load_split(split)[2]
+    idx = list(range(len(scenes)))[:n] if n else list(range(len(scenes)))
+    acc = {k: [] for k in MULTI_KEYS}
+    t = time.time()
+    with Pool(procs) as p:
+        for k_, d in enumerate(p.imap_unordered(build_scene, [(split, scenes[i], i, aug) for i in idx], chunksize=4)):
+            for k in MULTI_KEYS:
+                if len(d[k]):
+                    acc[k].append(d[k])
+            if k_ % 100 == 0:
+                print(f"   {k_}/{len(idx)} ảnh ({time.time() - t:.0f}s)", flush=True)
+    tag = "" if aug == 3 else str(aug - 2)
+    data = {k: np.concatenate(acc[k]) for k in STRONG_KEYS}
+    np.savez(CACHE / f"cvmulti{tag}_{split}.npz", **data)
+    del data
+    data2 = {k: np.concatenate(acc[k]) for k in MULTI_KEYS if k not in STRONG_KEYS}
+    np.savez(CACHE / f"cvmultimlp{tag}_{split}.npz", **data2)
+    print("đã lưu", CACHE / f"cvmulti{tag}_{split}.npz", f"{time.time() - t:.0f}s", flush=True)
+
+
+STRONG_AUG = os.environ.get("STRONG_AUG", "0") == "1"   # (gộp chung vào cvdata_train làm tràn RAM: dùng build_strong)
+STRONG_KEYS = ("edge_x", "edge_y", "cn_x", "cn_y", "sw_x", "sw_y", "we_x", "we_y")
+
+
+def _strong_job(args):
+    d = build_scene(args)
+    return {k: d[k] for k in STRONG_KEYS}
+
+
+def build_strong(split="train", n=None, procs=8):
+    """Bản làm méo MẠNH (degrade_strong), chỉ các mảnh cho 4 CNN -> cache/cvstrong_{split}.npz.
+    Thu kết quả dần (imap) để không tràn RAM."""
+    scenes = load_split(split)[2]
+    idx = list(range(len(scenes)))[:n] if n else list(range(len(scenes)))
+    acc = {k: [] for k in STRONG_KEYS}
+    t = time.time()
+    with Pool(procs) as p:
+        for k_, d in enumerate(p.imap_unordered(_strong_job, [(split, scenes[i], i, 2) for i in idx], chunksize=4)):
+            for k in STRONG_KEYS:
+                if len(d[k]):
+                    acc[k].append(d[k])
+            if k_ % 200 == 0:
+                print(f"   {k_}/{len(idx)} ảnh ({time.time() - t:.0f}s)", flush=True)
+    data = {k: np.concatenate(v) for k, v in acc.items()}
+    np.savez(CACHE / f"cvstrong_{split}.npz", **data)
+    print("đã lưu", CACHE / f"cvstrong_{split}.npz", {k: v.shape for k, v in data.items()}, f"{time.time() - t:.0f}s")
+
+
+def centers_of(s):
+    return [((l["swatch"][0] + l["swatch"][2]) / 2, (l["swatch"][1] + l["swatch"][3]) / 2) for l in s["legend"]]
+
+
 def build_scene(args):
     split, s, idx, aug = args
-    rng = np.random.default_rng(idx * 7 + (1000003 if aug else 0))
+    rng = np.random.default_rng(idx * 7 + (1000003 if aug else 0) + (2000003 if aug == 2 else 0) + (7000001 * aug if aug >= 3 else 0))
     rgb = read_rgb(DATA / split / s["image"])
-    if aug:
+    if aug >= 3:      # (đợt 19) tăng cường nhiều lớp, có xoay / thu nhỏ -> dời tọa độ chú thích theo
+        rgb, M = degrade_multi(rgb, rng)
+        s = warp_scene(s, M)
+    elif aug == 2:
+        rgb = degrade_strong(rgb, rng)
+    elif aug:
         rgb = degrade(rgb, rng)
     im = Img(rgb)
     W, H = im.w, im.h
@@ -86,8 +237,11 @@ def build_scene(args):
             dx, dy = rng.uniform(-0.02, 0.02, 2) * unit
             u = unit * rng.uniform(0.95, 1.05)
             out["node_x"].append(im.node_crop(p[0] + dx, p[1] + dy, u)); out["node_y"].append(c)
-        for _ in range(3 if c else (1 if rng.random() < 0.35 else 0)):   # dữ liệu cho CNN: tâm lệch tới 7% unit (như bộ dò thật)
-            j = rng.uniform(-0.07, 0.07, 2) * unit
+        # dữ liệu cho CNN: tâm lệch tới 7% unit như trước, cộng thêm các mẫu lệch tới 20% unit
+        # (bộ dò thật hay lệch 10-20px ở nhãn chữ rộng của kiểu "print", tức 10-23% unit)
+        for k in range(5 if c else (1 if rng.random() < 0.35 else 0)):
+            lo = 0.07 if k < 3 else 0.20
+            j = rng.uniform(-lo, lo, 2) * unit
             u = unit * rng.uniform(0.94, 1.06)
             out["cn_x"].append(im.node_crop(p[0] + j[0], p[1] + j[1], u)); out["cn_y"].append(c)
         for _ in range(4 if c else 0):   # bộ căn tâm (chỉ cho robot/địa điểm): lệch lớn, nhãn = độ lệch
@@ -95,6 +249,37 @@ def build_scene(args):
             u = unit * rng.uniform(0.95, 1.05)
             out["al_x"].append(im.node_crop(p[0] + j[0] * unit, p[1] + j[1] * unit, u)[3024:])
             out["al_y"].append(tuple(np.clip(np.round(j / ALIGN_STEP), -ALIGN_BINS, ALIGN_BINS).astype(int) + ALIGN_BINS))
+
+    # ---- "không phải giao lộ" (lớp 15 của CNN giao lộ): chữ tiêu đề, vạch bậc thang, mũi tên, dấu X, mép đoạn đường ----
+    # bộ dò quét dày hay báo nhầm ở những chỗ nhiều mực này; nếu không có lớp âm bản thì CNN sẽ gọi chúng là "giao lộ thường"
+    xyl = np.array(list(xy.values()))
+    others = np.array([c for c in centers_of(s)] + [wc])
+    ink = cv2.blur((im.gray < 110).astype(np.float32), (25, 25))[PAD:PAD + H, PAD:PAD + W]
+
+    def ok_neg(x, y):
+        if not (0 <= x < W and 0 <= y < H):
+            return False
+        return np.min(np.hypot(xyl[:, 0] - x, xyl[:, 1] - y)) > 0.30 * unit and np.min(np.hypot(others[:, 0] - x, others[:, 1] - y)) > 24
+
+    cand = rng.uniform([0, 0], [W, H], size=(600, 2))
+    w = np.array([ink[int(y), int(x)] for x, y in cand]) ** 1.5 + 1e-4
+    top = rng.choice(len(cand), size=40, replace=False, p=w / w.sum())
+    nneg = 0
+    for i in top:
+        x, y = cand[i]
+        if ok_neg(x, y) and nneg < 14:
+            out["cn_x"].append(im.node_crop(x, y, unit * rng.uniform(0.9, 1.1))); out["cn_y"].append(15); nneg += 1
+    for _ in range(3):          # vùng tiêu đề / mép trên của ảnh
+        x, y = rng.uniform(0.02 * W, 0.98 * W), rng.uniform(0, max(20.0, xyl[:, 1].min() - 0.5 * unit))
+        if ok_neg(x, y):
+            out["cn_x"].append(im.node_crop(x, y, unit * rng.uniform(0.9, 1.1))); out["cn_y"].append(15)
+    for e in s["edges"]:        # dọc đoạn đường: bậc thang, mũi tên, nửa đường; gồm cả chỗ cách giao lộ 0.3-0.5 unit
+        if rng.random() < 0.18:
+            a, b = np.array(xy[tuple(e["a"])]), np.array(xy[tuple(e["b"])])
+            t = rng.choice([rng.uniform(0.3, 0.7), rng.uniform(0.3, 0.45), rng.uniform(0.55, 0.7)])
+            p = a + t * (b - a)
+            if ok_neg(p[0], p[1]):
+                out["cn_x"].append(im.node_crop(p[0], p[1], unit * rng.uniform(0.9, 1.1))); out["cn_y"].append(15)
 
     # ---- đoạn đường (M3) ----
     look = s["road_look"]
@@ -162,6 +347,8 @@ def build(split, limit=None, aug=True, procs=11):
     if aug:   # thêm một bản "xuống cấp" cho các ảnh sạch
         jobs += [(split, s, i, True) for i, s in enumerate(scenes)
                  if s["degradation"]["blur"] == 0 and s["degradation"]["jpeg_quality"] is None]
+        if STRONG_AUG:   # thêm một bản làm méo mạnh cho MỌI ảnh
+            jobs += [(split, s, i, 2) for i, s in enumerate(scenes)]
     t = time.time()
     with Pool(procs) as p:
         parts = p.map(build_scene, jobs, chunksize=8)
@@ -174,12 +361,19 @@ def build(split, limit=None, aug=True, procs=11):
 
 if __name__ == "__main__":
     split = sys.argv[1]
-    what = sys.argv[2] if len(sys.argv) > 2 else "all"      # all | det | crops | cnn
-    data = build(split, None, aug=(split == "train"))
-    if what == "cnn":       # chỉ lưu dữ liệu cho CNN giao lộ, không đụng tới các file cache khác
-        np.savez(CACHE / f"cvcnn_{split}.npz", cn_x=data["cn_x"], cn_y=data["cn_y"])
-        print("đã lưu", CACHE / f"cvcnn_{split}.npz", data["cn_x"].shape)
+    what = sys.argv[2] if len(sys.argv) > 2 else "all"      # all | det | crops | cnn | strong
+    if what == "strong":
+        build_strong(split, int(sys.argv[3]) if len(sys.argv) > 3 else None)
         sys.exit()
+    if what.startswith("multi"):     # multi | multi2 (bản thứ hai, hạt giống khác -> cvmulti2_{split}.npz)
+        build_multi(split, int(sys.argv[3]) if len(sys.argv) > 3 else None, aug=3 + (int(what[5:]) - 1 if what[5:] else 0))
+        sys.exit()
+    data = build(split, None, aug=(split == "train"))
+    if what in ("cnn", "all"):       # dữ liệu cho CNN giao lộ (gồm lớp 15 "không phải giao lộ")
+        np.savez(CACHE / f"cvcnn_{split}.npz", cn_x=data["cn_x"], cn_y=data["cn_y"])
+        print("đã lưu", CACHE / f"cvcnn_{split}.npz", data["cn_x"].shape, "lớp 15:", int((data["cn_y"] == 15).sum()))
+        if what == "cnn":
+            sys.exit()
     data = {k: v for k, v in data.items() if not k.startswith("cn_")}
     if what in ("all", "crops"):
         np.savez(CACHE / f"cvdata_{split}.npz", **{k: v for k, v in data.items() if not k.startswith("det")})

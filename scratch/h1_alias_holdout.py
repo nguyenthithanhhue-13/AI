@@ -41,6 +41,23 @@ if "--phrases" in sys.argv:
     has = [set(ss) & set(keys) for ss in sents]
     print(f"{len(scenes)} cảnh, {len(keys)} câu con gấp / dễ vỡ chia 5 nhóm")
     aliases = keys
+elif "--templates" in sys.argv:
+    # giấu KHUNG CÂU: câu con có nhắc địa điểm, thay mọi tên gọi bằng "X" -> khung; khung gặp >= 3 lần chia 5 nhóm.
+    # Lượt k bỏ khỏi dữ liệu học mọi câu có khung thuộc nhóm k -> đo cách đọc vai trò với cách diễn đạt chưa gặp.
+    from nlp import sentences
+    allp = re.compile(r"(?<![a-z])(" + "|".join(sorted(map(re.escape, lex), key=len, reverse=True)) + r")(?![a-z])")
+    skel = lambda x: re.sub(r"\d+", "9", allp.sub("X", x))
+    sents = [{skel(x) for x in sentences(m["text"]) if allp.search(x)} for m in missions]
+    from collections import Counter
+    tab = Counter(s for ss in sents for s in ss)
+    maxc = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--maxc=")), 10 ** 9))
+    keys = sorted(x for x, c in tab.items() if 3 <= c <= maxc)
+    group = {a: int(g) for a, g in zip(keys, rng.permutation(len(keys)) % 5)}
+    has = [ss & set(keys) for ss in sents]
+    print(f"{len(scenes)} cảnh, {len(tab)} khung câu, {len(keys)} khung gặp 3..{maxc} lần chia 5 nhóm; "
+          f"{sum(map(bool, has))} cảnh có ít nhất một khung được chia")
+    for x, c in tab.most_common(12): print(f"   {c:5d}  {x}")
+    aliases = keys
 else:
     group = {a: int(g) for a, g in zip(aliases, rng.permutation(len(aliases)) % 5)}
     has = [{a for a in aliases if pats[a].search(norm(m["text"]))} for m in missions]
@@ -52,6 +69,21 @@ for k in folds:
     held = {a for a in aliases if group[a] == k}
     ev = [i for i in range(len(scenes)) if has[i] & held]
     tr = [i for i in range(len(scenes)) if not has[i] & held]
+    if "--fair" in sys.argv:
+        # tên gọi bị giấu cũng phải vắng mặt trong từ khóa / ví dụ viết tay (nếu không thì đo lạc quan):
+        # bỏ mọi mẫu từ khóa khớp một tên bị giấu, mọi ví dụ PLACES chứa / nằm trong một tên bị giấu
+        import nlp_knowledge
+        _kw0 = getattr(nlp2, "_KW0", None) or {t: list(v) for t, v in nlp2.KEYWORDS.items()}
+        _pl0 = getattr(nlp2, "_PL0", None) or {t: list(v) for t, v in nlp_knowledge.PLACES.items()}
+        _pm0 = getattr(nlp2, "_PM0", None) or {t: list(v) for t, v in nlp_knowledge.PLACES_MORE.items()}
+        nlp2._KW0, nlp2._PL0, nlp2._PM0 = _kw0, _pl0, _pm0
+        nlp2.KEYWORDS = {t: [(pt, w) for pt, w in v if not any(re.search(pt, a) for a in held)] for t, v in _kw0.items()}
+        un = lambda s: norm(s)
+        _pd0 = getattr(nlp2, "_PD0", None) or {t: list(v) for t, v in nlp_knowledge.PLACES_DESC.items()}
+        nlp2._PD0 = _pd0
+        for d, d0 in ((nlp_knowledge.PLACES, _pl0), (nlp_knowledge.PLACES_MORE, _pm0), (nlp_knowledge.PLACES_DESC, _pd0)):
+            d.clear()
+            d.update({t: [x for x in v if not any(a in un(x) or un(x) in a for a in held)] for t, v in d0.items()})
     p = MissionParser2()
     if "--no-knowledge" in sys.argv: p.use_knowledge = False
     if "--no-e5" in sys.argv: p.use_e5 = False
@@ -61,6 +93,9 @@ for k in folds:
         if a.startswith("--gw="): nlp2.GOAL_TEXT_W = float(a[5:])
         if a.startswith("--ng="): nlp2.CTX_NG_W = float(a[5:])
         if a.startswith("--nglow="): nlp2.CTX_NG_LOWCONF = float(a[8:])
+        if a.startswith("--set="):                     # --set=TÊN=giá_trị: đổi một hằng số của nlp2
+            name, val = a[6:].split("=")
+            setattr(nlp2, name, eval(val))
     p.fit([missions[i] for i in tr])
     show = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--show=")), 0))
     sc, _, _ = evaluate(p, [scenes[i] for i in ev], [labels[i] for i in ev], show, f"nhóm {k}: học {len(tr)} chấm {len(ev)}")
