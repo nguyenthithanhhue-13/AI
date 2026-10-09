@@ -1,3 +1,33 @@
+# Cập nhật đợt 20b (08/10, 0h-1h): v41 = 0,9900 trên bảng xếp hạng; ứng viên v42
+
+**v41 đã nộp: 0,9900 (robot yếu nhất 0,9833)**, tăng từ 0,9828 (v35) -> xác nhận lỗi đọc ngược "không xa / không ở gần".
+
+Kiểm toán tính hợp lý của kết quả đọc trên test (`scratch/h109_coherence_audit.py`, chỉ đếm cấu trúc; validation: 0 ở
+mọi loại) tìm ra:
+- `PREP_CANON` ("sang / vào / về / ra" -> "tới") làm HỎNG cả 3 bản đồ nó đổi trên test (cảnh 547, 661 thành "không có
+  đích", cảnh 822 "đích độ tin 0,99 bị phủ định"; `scratch/h107_scene_struct.py`): câu test dùng các chữ này theo nghĩa
+  khác với câu tự soạn. Thêm `CANON_GUARD`: chỉ dùng câu đã đổi khi kết quả không kém hợp lý hơn (mất đích / thêm phủ
+  định) -> 19/20 cảnh test bị chặn, dự đoán trở về như v35 ở 3 bản đồ đó.
+- Phạm vi phủ định (`NEG_SCOPE_FIX`): "không cần / không phải / chẳng cần / khỏi cần" và "đừng + động từ" chỉ phủ định
+  ĐỊA ĐIỂM khi theo sau là động từ đi / giao, chính địa điểm, "là / ở / đâu / nữa"; trước đây "Giao tới thư viện, không
+  cần ký nhận", "Đừng đi đường vòng, mang tới X" làm mất đích (câu tự soạn h107 / h108: 36/66 -> 66/66); thêm "đừng
+  chuyển / gửi ... tới X". Kèm `SCOPE_GUARD` (không để lại đích độ tin < 0,1 khi cách đọc cũ có đích >= 0,9).
+- `GOAL_PLAUS_GUARD`: đích còn lại độ tin < 0,1 mà một lần nhắc bị luật "đừng ..." gạt đi lại có độ tin vai đích >= 0,9
+  -> lần nhắc đó là đích (6 cảnh test, validation 0); `GOAL_GUARD`: không còn đích nào -> lần nhắc độ tin >= 0,9.
+- Train + validation: các thay đổi trên đổi 0 / 2.300 câu (`scratch/h95_flag_same.py`).
+
+- `CUE_TYPO_FIX`: sửa lỗi gõ ở CẢ CỤM then chốt của câu gây nhiễu ("Khỏi hải qua X", "Tránh hầm với X", "Ln trước giao ở X
+  rồi", "X đng cửa rồi", "Người nhận hông còn ở X"; chữ của cụm gấp / dễ vỡ như "vội" được bảo vệ). h27 gõ sai, khung gây
+  nhiễu: "Đừng lạc sang X" 0,82 -> 1,00, "Cẩn thận nhầm sang X" 0,85 -> 1,00, "Khỏi tới X" 0,93 -> 0,98. Train + validation:
+  sửa đúng 17 lỗi gõ thật, kết quả đọc đổi 0 câu; test: 0 dòng đổi.
+- Chuỗi kiểm tra đầy đủ `checks_v42.log` + vòng ngắn trên mã cuối: mọi phép thử bằng v41 (h22, h27 306/306, h27c/d/e, h34
+  1,0000, h48 1.193/1.196 và train 1.991/2.000, h37 312/320...), riêng h90 0,956 -> 0,936 (chốt `CANON_GUARD`, chủ ý).
+  `python src/pipeline.py test final` với `src/` hiện tại cho đúng v42 (đã kiểm trên bản sao).
+
+**Ứng viên v42: `outputs/cac_ban_nop_cu/predictions_v42_negscope.json`** — so với v41: 7 bản đồ / 32 dòng
+([20, 33, 423, 547, 661, 742, 1067]: 3 bản đồ bỏ phần đổi giới từ, 4 bản đồ từ phạm vi phủ định / lưới an toàn); so với
+v35: 21 bản đồ / 114 dòng.
+
 # Cập nhật đợt 20 (07/10, tối): tham chiếu gần / xa BỊ PHỦ ĐỊNH — ứng viên v41
 
 **Bản ứng viên: `outputs/cac_ban_nop_cu/predictions_v41_negref.json`** (bản đồ test của v35 + bộ đọc v35 đã lưu

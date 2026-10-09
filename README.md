@@ -1,5 +1,7 @@
 # Phenikaa Campus Courier v2 — lời giải
 
+> **Vòng private test (08/10):** xem [VONG_PRIVATE.md](VONG_PRIVATE.md) — pipeline `src/pipeline_p2.py`, kết quả trong `outputs/private_result/`.
+
 ## Tóm tắt bài
 
 - Có 10 robot, mỗi robot có một chiến thuật di chuyển cố định. Mỗi **cảnh** gồm một ảnh sơ đồ campus và một yêu cầu
@@ -73,7 +75,9 @@ bản đồ; độ đúng của bước đó trên test không đo được. Xem
 | file trong `outputs/cac_ban_nop_cu/` | nội dung | điểm bảng xếp hạng |
 |---|---|---|
 | `predictions_v2_lb0.9322.json` | NLP bản 2 (tìm tên gọi lạ theo ngữ cảnh + từ khóa + bản đồ) | **0,9322** (robot yếu nhất 0,8611) |
-| **`predictions_v41_negref.json`** (ứng viên) | v35 + đọc câu đợt 20 (`src/nlp2.py`; mã v35: `nlp2_v35_src.py.bak`): tham chiếu gần / xa BỊ PHỦ ĐỊNH ("X không xa Y" = gần, "không ở gần Y" = xa — 0 câu trong train + validation, bộ phân loại đọc ngược; `REF_NEG_FIX`), giới từ "sang / vào / về / ra" (`PREP_CANON`) và các sửa tổng quát khác (CAP_NHAT đợt 20). Bản đồ test + bộ đọc đã lưu của v35. Khác v35: 20 bản đồ / 120 dòng | chưa nộp |
+| **`predictions_v42_negscope.json`** (ứng viên) | v41 + đợt 20b (`src/nlp2.py` hiện tại; mã v41: `nlp2_v41_src.py.bak`): chặn phần đổi giới từ khi nó làm kết quả kém hợp lý (`CANON_GUARD`), phạm vi phủ định "không cần / đừng" (`NEG_SCOPE_FIX` + `SCOPE_GUARD`), lưới an toàn đích (`GOAL_PLAUS_GUARD`, `GOAL_GUARD`). Khác v41: 7 bản đồ / 32 dòng; khác v35: 21 bản đồ / 114 dòng. `python src/pipeline.py test final` (xóa `cache/nlp2_test_final_final.pkl`) cho đúng v42 | chưa nộp |
+| `predictions_v41_negref.json` | v35 + đợt 20 (xem dòng dưới) | **0,9900** (robot yếu nhất 0,9833) |
+| `predictions_v41_negref.json` (mô tả cũ) | v35 + đọc câu đợt 20 (`src/nlp2.py`; mã v35: `nlp2_v35_src.py.bak`): tham chiếu gần / xa BỊ PHỦ ĐỊNH ("X không xa Y" = gần, "không ở gần Y" = xa — 0 câu trong train + validation, bộ phân loại đọc ngược; `REF_NEG_FIX`), giới từ "sang / vào / về / ra" (`PREP_CANON`) và các sửa tổng quát khác (CAP_NHAT đợt 20). Bản đồ test + bộ đọc đã lưu của v35. Khác v35: 20 bản đồ / 120 dòng | chưa nộp |
 | `predictions_v40_cv_multi.json` | v35 + CV tăng cường NHIỀU LỚP (đợt 19, `scratch/make_v40.sh`): CNN tinh chỉnh trên ảnh xoay / thu nhỏ / mất độ phân giải / mờ / đổi màu-tương phản / nhiễu / JPEG chồng nhau, MLP căn tâm + giao lộ học lại, CNN đọc mọi đoạn đường, gộp CNN đoạn đường cũ + mới (`models_finalm`). Bền hơn hẳn trên validation làm méo nặng; trên test chỉ đổi 2 bản đồ (đoạn đường) và **0 dòng dự đoán** -> trùng v35 (xem CAP_NHAT đợt 19) | không nộp (= v35) |
 | `predictions_v39_refit_vote.json` | v35 + bỏ phiếu giữa 7 lần học lại bộ đọc câu: khác v35 1 cảnh / 5 dòng (tung đồng xu) | không nộp |
 | `predictions_v38_tta_vote.json` | v35 + bỏ phiếu CV đa nhiễu: trùng v35 | không nộp |

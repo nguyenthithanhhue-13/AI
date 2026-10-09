@@ -18,9 +18,13 @@ from scipy.sparse import hstack
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
-PREFIX = r"^(robot oi|yeu cau moi|nho ban nhe|xin chao|chao robot|nhan robot)\b[,: ]*"
+PREFIX = r"^(robot oi|yeu cau moi|nho ban nhe|xin chao|chao robot|nhan robot|doi lai|thay vao do|dung ra)\b[,: ]*"
 DIS_FRAMES = [r"^khong can ghe (.+)$", r"^dung nham voi (.+) nhe$", r"^hom qua da giao o (.+) roi$",
-              r"^nguoi nhan da roi (.+) roi$", r"^(.+) khong phai diem nhan$", r"^bo qua (.+), khong phai o do$"]
+              r"^nguoi nhan da roi (.+) roi$", r"^(.+) khong phai diem nhan$", r"^bo qua (.+), khong phai o do$",
+              # (vòng private) đính chính / hủy đơn: "(tin trước ghi X là nhầm)", "Lúc nãy nhắn nhầm là X. Đúng ra: ...",
+              # "Hủy đơn giao X. Thay vào đó: ...", "Không giao X nữa nhé, đổi lại: ..."
+              r"^tin truoc ghi (.+) la nham$", r"^luc nay nhan nham la (.+)$", r"^huy don giao (.+)$",
+              r"^khong giao (.+) nua nhe$"]
 ROLES = ["goal", "via", "dis", "anc"]
 KINDS = ["none", "north", "south", "west", "east", "near", "far"]
 PLACE_TYPES = ["library", "dorm", "sports", "clinic", "canteen", "parking", "lecture", "lab", "office", "gate"]
@@ -47,6 +51,9 @@ _AFTER_ORI_OK |= {"cong", "ham", "day", "bai", "tram", "cuoi", "tran", "bong", "
                   "nao", "nan", "nau", "lam", "cam", "dam", "sam", "then", "tien", "treo", "tron", "duoc", "tuoi",
                   "muoi", "nuoi", "suoi", "trao", "trau", "phat", "phan", "phao", "khai", "thai"}
 # ("dui", "don", "hai"... KHÔNG thêm: chúng là lỗi rơi chữ thật của "duoi", "dong", "phai")
+# đợt 20: chính các từ khung ("bên PHÍA nhà ăn", "về phía hướng ...") không phải từ chỉ hướng gõ sai ("phia" ~ "phai" đảo chữ)
+# (train + validation: 0 cặp từ khung liền nhau -> không đổi gì trên dữ liệu)
+_AFTER_ORI_OK |= {"phia", "huong", "man", "mien", "goc", "canh"}
 SPATIAL_TYPO_FIX = True
 
 
@@ -94,6 +101,9 @@ def repair_spatial(p):
 
 def sentences(text):
     t = re.sub(r"\[don #\d+\]", " ", norm(text))
+    # (vòng private) câu đính chính trong ngoặc và "..., đổi lại: / thay vào đó: / đúng ra:" là ranh giới câu
+    t = re.sub(r"[()]", ".", t)
+    t = re.sub(r",\s*(doi lai|thay vao do|dung ra)\s*:", r". \1:", t)
     out = []
     for p in re.split(r"[.!?]+", t):
         p = re.sub(r"\s+", " ", p).strip(" ,")
@@ -125,6 +135,7 @@ def dl_distance(a, b, maxd=2):
 
 FUZZY_COMMON = 100   # từ gặp >= 100 lần trong dữ liệu học không được coi là bản gõ sai của tên gọi; None = tắt
 ONE_WORD_LAX = True  # trừ khi tên gọi nhiều từ và chỉ đúng một từ lệch
+SHORT_LAX_FIX = True  # (vòng private) không nới cho từ lệch ngắn (< 4 chữ): "an tap" ~ "san tap"
 
 
 class Lexicon:
@@ -162,6 +173,10 @@ class Lexicon:
         # ("hong lab" ~ "phong lab": "hong" là từ thật nhưng "lab" khớp đúng). Cụm quen thuộc vẫn bị chặn ở cuối hàm.
         ndiff = sum(1 for w, a in zip(wt, at) if w != a)
         lax = ONE_WORD_LAX and len(at) >= 2 and ndiff == 1
+        if lax and SHORT_LAX_FIX and any(len(w) < 4 for w, a in zip(wt, at) if w != a):
+            # (vòng private) từ lệch NGẮN và thông dụng không được nới: "phòng ĂN tập thể" -> "an tap" ~ "san tap" (sân tập) là sai;
+            # "hong lab" ~ "phong lab" (từ lệch 4 chữ) vẫn được
+            lax = False
         for w, a in zip(wt, at):
             if w == a:
                 continue
@@ -241,7 +256,8 @@ def mine_lexicon(missions):
                     break
             else:
                 # câu gây nhiễu bị gõ sai sẽ không khớp khung -> lọc lỏng bằng từ khóa để không làm bẩn thống kê
-                if not re.search(r"khong can ghe|dung nham|hom qua da|nguoi nhan da|diem nhan|bo qua|o do$", x):
+                if not re.search(r"khong can ghe|dung nham|hom qua da|nguoi nhan da|diem nhan|bo qua|o do$|tin truoc|la nham"
+                                 r"|nham la|luc nay|huy don|nua nhe", x):
                     keep.append(x)
         rest.append((" . ".join(keep), types, m["goal"]))
     lex = {}
